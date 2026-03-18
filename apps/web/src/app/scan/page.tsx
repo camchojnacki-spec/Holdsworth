@@ -1,17 +1,17 @@
 "use client";
 
-import { useState, useRef } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, Check, X, RotateCcw, Camera, Upload } from "lucide-react";
+import { Loader2, Check, X, RotateCcw, Camera, Upload, SwitchCamera } from "lucide-react";
 import { scanCard, type ScanActionResult } from "@/actions/scanner";
 import { createCard } from "@/actions/cards";
 import type { CardScanResponse } from "@/lib/ai/gemini";
 
-type ScanState = "idle" | "analyzing" | "results" | "saving" | "error";
+type ScanState = "idle" | "camera" | "analyzing" | "results" | "saving" | "error";
 
 export default function ScanPage() {
   const router = useRouter();
@@ -20,8 +20,116 @@ export default function ScanPage() {
   const [result, setResult] = useState<CardScanResponse | null>(null);
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
+
+  // Clean up camera stream on unmount
+  useEffect(() => {
+    return () => {
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+    };
+  }, []);
+
+  const startCamera = useCallback(async () => {
+    try {
+      // Stop any existing stream
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop());
+      }
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode,
+          width: { ideal: 1920 },
+          height: { ideal: 1080 },
+        },
+      });
+
+      streamRef.current = stream;
+      setState("camera");
+
+      // Wait for ref to be available after state change
+      requestAnimationFrame(() => {
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.play();
+        }
+      });
+    } catch {
+      setError("Camera access denied. Grant permission or use Upload instead.");
+      setState("error");
+    }
+  }, [facingMode]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+  }, []);
+
+  const capturePhoto = useCallback(() => {
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    if (!video || !canvas) return;
+
+    // Capture at full video resolution
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    ctx.drawImage(video, 0, 0);
+    stopCamera();
+
+    // Convert to high-quality JPEG
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
+    setPreview(dataUrl);
+    setState("analyzing");
+
+    // Convert dataURL to File and send to scanner
+    canvas.toBlob(
+      async (blob) => {
+        if (!blob) {
+          setError("Failed to capture image");
+          setState("error");
+          return;
+        }
+
+        const formData = new FormData();
+        formData.append("image", blob, "capture.jpg");
+
+        const response: ScanActionResult = await scanCard(formData);
+
+        if (response.success && response.data) {
+          setResult(response.data);
+          setProcessingTime(response.processingTimeMs ?? null);
+          setState("results");
+        } else {
+          setError(response.error ?? "Pull did not resolve. Adjust angle or lighting.");
+          setState("error");
+        }
+      },
+      "image/jpeg",
+      0.95
+    );
+  }, [stopCamera]);
+
+  const switchCamera = useCallback(() => {
+    setFacingMode((prev) => (prev === "environment" ? "user" : "environment"));
+  }, []);
+
+  // Re-start camera when facing mode changes while camera is active
+  useEffect(() => {
+    if (state === "camera") {
+      startCamera();
+    }
+  }, [facingMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -79,12 +187,12 @@ export default function ScanPage() {
   };
 
   const reset = () => {
+    stopCamera();
     setState("idle");
     setPreview(null);
     setResult(null);
     setError(null);
     setProcessingTime(null);
-    if (cameraInputRef.current) cameraInputRef.current.value = "";
     if (fileInputRef.current) fileInputRef.current.value = "";
   };
 
@@ -95,9 +203,10 @@ export default function ScanPage() {
         <p className="text-muted-foreground text-sm mt-1">Photograph a card. Holdsworth identifies it.</p>
       </div>
 
-      {/* Hidden file inputs */}
-      <input ref={cameraInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileSelect} />
+      {/* Hidden file input for upload */}
       <input ref={fileInputRef} type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleFileSelect} />
+      {/* Hidden canvas for capturing frames */}
+      <canvas ref={canvasRef} className="hidden" />
 
       {state === "idle" && (
         <Card className="border-dashed">
@@ -116,23 +225,65 @@ export default function ScanPage() {
               <span className="text-sm text-muted-foreground mt-2 text-center">Photograph front. Back optional but recommended.</span>
               <span style={{ fontFamily: "var(--font-mono)" }} className="text-[11px] tracking-wider uppercase text-muted-foreground mt-4">High resolution for best identification</span>
 
-              {/* Two action buttons */}
               <div className="flex gap-3 mt-8 w-full max-w-xs">
-                <Button
-                  onClick={() => cameraInputRef.current?.click()}
-                  className="flex-1 gap-2"
-                >
+                <Button onClick={startCamera} className="flex-1 gap-2">
                   <Camera className="h-4 w-4" />
-                  Take Photo
+                  Camera
                 </Button>
-                <Button
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="flex-1 gap-2"
-                >
+                <Button variant="outline" onClick={() => fileInputRef.current?.click()} className="flex-1 gap-2">
                   <Upload className="h-4 w-4" />
                   Upload
                 </Button>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {state === "camera" && (
+        <Card>
+          <CardContent className="p-0 overflow-hidden rounded-2xl">
+            <div className="relative bg-black">
+              {/* Live viewfinder */}
+              <video
+                ref={videoRef}
+                autoPlay
+                playsInline
+                muted
+                className="w-full aspect-[3/4] sm:aspect-video object-cover"
+              />
+
+              {/* Viewfinder overlay */}
+              <div className="absolute inset-0 pointer-events-none">
+                {/* Card frame guide — 2.5 x 3.5 aspect ratio */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60%] aspect-[2.5/3.5]">
+                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[var(--color-burg)]" />
+                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[var(--color-burg)]" />
+                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[var(--color-burg)]" />
+                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[var(--color-burg)]" />
+                  {/* Scanning line */}
+                  <div className="absolute left-2 right-2 h-[2px] bg-[var(--color-burg)] opacity-50" style={{ animation: "scanH 2.5s cubic-bezier(0.25,0.1,0.25,1) infinite" }} />
+                </div>
+              </div>
+
+              {/* Controls overlay */}
+              <div className="absolute bottom-0 inset-x-0 p-4 bg-gradient-to-t from-black/60 to-transparent">
+                <div className="flex items-center justify-center gap-4">
+                  <Button variant="ghost" size="icon" onClick={() => { stopCamera(); reset(); }} className="text-white hover:bg-white/20">
+                    <X className="h-5 w-5" />
+                  </Button>
+
+                  <button
+                    onClick={capturePhoto}
+                    className="w-16 h-16 rounded-full border-4 border-white flex items-center justify-center hover:bg-white/20 transition-colors"
+                  >
+                    <div className="w-12 h-12 rounded-full bg-white" />
+                  </button>
+
+                  <Button variant="ghost" size="icon" onClick={switchCamera} className="text-white hover:bg-white/20">
+                    <SwitchCamera className="h-5 w-5" />
+                  </Button>
+                </div>
               </div>
             </div>
           </CardContent>
