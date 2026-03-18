@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    container_name: holdsworth-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: holdsworth
+      POSTGRES_PASSWORD: holdsworth_dev_2026
+      POSTGRES_DB: holdsworth
+    ports:
+      - "5432:5432"
+    volumes:
+      - holdsworth_pgdata:/var/lib/postgresql/data
+
+volumes:
+  holdsworth_pgdata:

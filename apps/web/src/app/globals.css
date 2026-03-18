@@ -1,0 +1,106 @@
+@import "tailwindcss";
+
+@theme {
+  /* ── Holdsworth Dark Scale ── */
+  --color-background: #111110;
+  --color-foreground: #D4D4CE;
+  --color-card: #1D1D1B;
+  --color-card-foreground: #D4D4CE;
+  --color-popover: #1D1D1B;
+  --color-popover-foreground: #D4D4CE;
+
+  /* ── Burgundy (Primary Accent) ── */
+  --color-primary: #7A2B3A;
+  --color-primary-foreground: #FCFCFA;
+
+  /* ── Secondary ── */
+  --color-secondary: #2E2E2B;
+  --color-secondary-foreground: #D4D4CE;
+
+  /* ── Muted ── */
+  --color-muted: #1D1D1B;
+  --color-muted-foreground: #A8A8A2;
+
+  /* ── Accent ── */
+  --color-accent: #2E2E2B;
+  --color-accent-foreground: #D4D4CE;
+
+  /* ── Destructive ── */
+  --color-destructive: #B33A3A;
+  --color-destructive-foreground: #FCFCFA;
+
+  /* ── Amber / Value ── */
+  --color-amber: #9E7B2F;
+  --color-amber-light: #B8933A;
+
+  /* ── Signals ── */
+  --color-success: #2D6B4A;
+  --color-success-light: #5BAA7C;
+  --color-warning: #9E7B2F;
+
+  /* ── Borders ── */
+  --color-border: rgba(122, 43, 58, 0.12);
+  --color-input: rgba(122, 43, 58, 0.15);
+  --color-ring: #7A2B3A;
+
+  /* ── Extended Holdsworth Palette ── */
+  --color-h-black: #111110;
+  --color-h-off-black: #1D1D1B;
+  --color-h-charcoal: #2E2E2B;
+  --color-h-graphite: #4A4A46;
+  --color-h-mid: #7A7A74;
+  --color-h-silver: #A8A8A2;
+  --color-h-light: #D4D4CE;
+  --color-h-pearl: #EDEDEA;
+  --color-h-warm-white: #F7F7F4;
+  --color-h-white: #FCFCFA;
+  --color-burg: #7A2B3A;
+  --color-burg-light: #C4737F;
+  --color-burg-hover: #8E3345;
+  --color-burg-deep: #5C1F2B;
+  --color-burg-wash: rgba(122, 43, 58, 0.06);
+  --color-burg-10: rgba(122, 43, 58, 0.10);
+  --color-burg-border: rgba(122, 43, 58, 0.18);
+  --color-green: #2D6B4A;
+  --color-green-light: #5BAA7C;
+
+  /* ── Typography ── */
+  --font-display: 'DM Serif Display', Georgia, serif;
+  --font-body: 'Karla', system-ui, sans-serif;
+  --font-mono: 'IBM Plex Mono', monospace;
+
+  /* ── Radii ── */
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 10px;
+  --radius-xl: 16px;
+}
+
+body {
+  background-color: var(--color-h-black);
+  color: var(--color-h-light);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-burg);
+  color: var(--color-h-white);
+}
+
+@keyframes scanSweep {
+  0% { left: -50%; }
+  100% { left: 150%; }
+}
+
+@keyframes scanH {
+  0% { top: 0; opacity: 1; }
+  50% { top: calc(100% - 2px); opacity: 0.5; }
+  100% { top: 0; opacity: 1; }
+}
+
+@keyframes scanCorner {
+  0% { opacity: 0.4; }
+  50% { opacity: 1; }
+  100% { opacity: 0.4; }
+}
