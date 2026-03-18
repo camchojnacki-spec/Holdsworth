@@ -3,8 +3,9 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, ExternalLink } from "lucide-react";
 import { getCardById } from "@/actions/cards";
+import { lookupCardPrice } from "@/actions/prices";
 import { DeleteCardButton } from "@/components/cards/delete-card-button";
 
 export default async function CardDetailPage({
@@ -16,6 +17,19 @@ export default async function CardDetailPage({
   const card = await getCardById(id);
 
   if (!card) notFound();
+
+  // Auto-fetch comps from eBay
+  const comps = await lookupCardPrice({
+    playerName: card.playerName ?? "",
+    year: card.year,
+    setName: card.setName,
+    cardNumber: card.cardNumber,
+    parallelVariant: card.parallelVariant,
+    manufacturer: card.manufacturerName,
+    graded: card.graded ?? false,
+    gradingCompany: card.gradingCompany,
+    grade: card.grade,
+  });
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -89,32 +103,117 @@ export default async function CardDetailPage({
               )}
             </CardContent>
           </Card>
-
-          {(card.estimatedValueCad || card.purchasePrice) && (
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">Valuation</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {card.estimatedValueCad && (
-                  <div>
-                    <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Estimated Value</label>
-                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-lg text-[var(--color-burg-light)]">${card.estimatedValueCad} CAD</p>
-                    {card.estimatedValueUsd && (
-                      <p style={{ fontFamily: "var(--font-mono)" }} className="text-xs text-muted-foreground">${card.estimatedValueUsd} USD</p>
-                    )}
-                  </div>
-                )}
-                {card.purchasePrice && (
-                  <Field label="Purchase Price" value={`$${card.purchasePrice} ${card.purchaseCurrency}`} />
-                )}
-                {card.purchaseSource && <Field label="Source" value={card.purchaseSource} />}
-                {card.purchaseDate && <Field label="Purchase Date" value={card.purchaseDate.toLocaleDateString()} />}
-              </CardContent>
-            </Card>
-          )}
         </div>
       </div>
+
+      {/* ── Market Comps ── */}
+      <Card>
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">Market Comps</CardTitle>
+            <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
+              eBay Sold
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent>
+          {comps.success && comps.stats ? (
+            <div className="space-y-4">
+              {/* Price summary */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                <div className="bg-secondary/30 rounded-lg p-3">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Avg Price</label>
+                  <p style={{ fontFamily: "var(--font-mono)" }} className="text-lg font-medium text-[var(--color-burg-light)]">
+                    ${comps.stats.avgPrice.toFixed(2)}
+                  </p>
+                  <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground">
+                    ~${comps.stats.avgPriceCad.toFixed(2)} CAD
+                  </p>
+                </div>
+                <div className="bg-secondary/30 rounded-lg p-3">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Median</label>
+                  <p style={{ fontFamily: "var(--font-mono)" }} className="text-lg font-medium text-white">
+                    ${comps.stats.medianPrice.toFixed(2)}
+                  </p>
+                </div>
+                <div className="bg-secondary/30 rounded-lg p-3">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Low</label>
+                  <p style={{ fontFamily: "var(--font-mono)" }} className="text-lg font-medium text-[var(--color-green-light)]">
+                    ${comps.stats.lowPrice.toFixed(2)}
+                  </p>
+                </div>
+                <div className="bg-secondary/30 rounded-lg p-3">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">High</label>
+                  <p style={{ fontFamily: "var(--font-mono)" }} className="text-lg font-medium text-white">
+                    ${comps.stats.highPrice.toFixed(2)}
+                  </p>
+                </div>
+              </div>
+
+              <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
+                {comps.stats.count} sold listings found
+              </p>
+
+              {/* Recent sold listings */}
+              <div className="space-y-2">
+                {comps.listings.slice(0, 8).map((listing, i) => (
+                  <a
+                    key={i}
+                    href={listing.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="flex items-center justify-between py-2 px-3 rounded-lg hover:bg-primary/[0.03] transition-colors group"
+                  >
+                    <div className="min-w-0 flex-1 mr-3">
+                      <p className="text-sm text-white truncate">{listing.title}</p>
+                      <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground">
+                        {listing.condition}{listing.dateSold ? ` · ${listing.dateSold}` : ""}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 flex-shrink-0">
+                      <span style={{ fontFamily: "var(--font-mono)" }} className="text-sm font-medium text-[var(--color-burg-light)]">
+                        ${listing.price.toFixed(2)}
+                      </span>
+                      <ExternalLink className="h-3 w-3 text-muted-foreground opacity-0 group-hover:opacity-100 transition-opacity" />
+                    </div>
+                  </a>
+                ))}
+              </div>
+
+              <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground pt-1">
+                Search: &quot;{comps.query}&quot;
+              </p>
+            </div>
+          ) : comps.success && !comps.stats ? (
+            <div className="text-center py-6">
+              <p className="text-sm text-muted-foreground">No sold listings found</p>
+              <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground mt-1">
+                Search: &quot;{comps.query}&quot;
+              </p>
+            </div>
+          ) : (
+            <div className="text-center py-6">
+              <p className="text-sm text-muted-foreground">Price lookup failed</p>
+              {comps.error && <p className="text-xs text-destructive mt-1">{comps.error}</p>}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {(card.purchasePrice || card.purchaseSource) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">Acquisition</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {card.purchasePrice && (
+              <Field label="Purchase Price" value={`$${card.purchasePrice} ${card.purchaseCurrency}`} />
+            )}
+            {card.purchaseSource && <Field label="Source" value={card.purchaseSource} />}
+            {card.purchaseDate && <Field label="Purchase Date" value={card.purchaseDate.toLocaleDateString()} />}
+          </CardContent>
+        </Card>
+      )}
 
       {card.notes && (
         <Card>
