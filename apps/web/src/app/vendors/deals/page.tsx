@@ -5,8 +5,8 @@ export default function DealsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Best Deals</h1>
-        <p className="text-muted-foreground">Best current prices on boxes and packs (with Canadian landed cost)</p>
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-3xl font-light tracking-wide text-white">Best Deals</h1>
+        <p className="text-muted-foreground text-sm mt-1">Best current prices on boxes and packs (with Canadian landed cost)</p>
       </div>
 
       <Card>

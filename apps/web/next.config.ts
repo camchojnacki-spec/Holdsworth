@@ -1,7 +1,7 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  transpilePackages: ["@cardscanner/db"],
+  transpilePackages: ["@holdsworth/db"],
 };
 
 export default nextConfig;

@@ -1,5 +1,5 @@
 {
-  "name": "@cardscanner/web",
+  "name": "@holdsworth/web",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
-    "@cardscanner/db": "workspace:*",
+    "@holdsworth/db": "workspace:*",
     "@google/genai": "^1.45.0",
     "@radix-ui/react-dialog": "^1.1.0",
     "@radix-ui/react-dropdown-menu": "^2.1.0",

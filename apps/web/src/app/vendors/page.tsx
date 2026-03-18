@@ -8,8 +8,8 @@ export default function VendorsPage() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold">Vendors</h1>
-          <p className="text-muted-foreground">Track retailers and box/pack prices</p>
+          <h1 style={{ fontFamily: "var(--font-display)" }} className="text-3xl font-light tracking-wide text-white">Vendors</h1>
+          <p className="text-muted-foreground text-sm mt-1">Track retailers and box/pack prices</p>
         </div>
         <Button className="gap-2">
           <Plus className="h-4 w-4" />

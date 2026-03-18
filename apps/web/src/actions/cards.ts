@@ -1,6 +1,6 @@
 "use server";
 
-import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates } from "@cardscanner/db";
+import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates } from "@holdsworth/db";
 import { eq, desc, ilike, and, sql, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { CardWithDetails } from "@/types/cards";

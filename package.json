@@ -1,5 +1,5 @@
 {
-  "name": "cardscanner",
+  "name": "holdsworth",
   "private": true,
   "scripts": {
     "dev": "turbo dev",

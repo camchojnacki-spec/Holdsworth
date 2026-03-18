@@ -5,8 +5,8 @@ export default function AlertsPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Price Alerts</h1>
-        <p className="text-muted-foreground">Get notified when card prices change</p>
+        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-3xl font-light tracking-wide text-white">Wax Alerts</h1>
+        <p className="text-muted-foreground text-sm mt-1">Get notified when card prices change</p>
       </div>
 
       <Card>
