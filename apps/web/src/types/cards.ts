@@ -28,6 +28,8 @@ export interface CardWithDetails {
   trendPercentage: string | null;
   createdAt: Date;
   updatedAt: Date;
+  isAutograph?: boolean;
+  subsetOrInsert?: string | null;
 }
 
 export type CardStatus = "in_collection" | "for_sale" | "sold" | "traded";

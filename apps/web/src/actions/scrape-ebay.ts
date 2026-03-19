@@ -156,6 +156,8 @@ export async function buildEbayQueries(card: {
   graded?: boolean;
   gradingCompany?: string | null;
   grade?: string | null;
+  isAutograph?: boolean;
+  subsetOrInsert?: string | null;
 }): string[] {
   const queries: string[] = [];
 
@@ -164,34 +166,53 @@ export async function buildEbayQueries(card: {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "");
 
-  // Query 1: Most specific — year + set + player + variant
+  // Determine if we should add "autograph" to queries
+  const autoTag = card.isAutograph ? "autograph" : "";
+  const insertName = card.subsetOrInsert || "";
+
+  // Query 1: Most specific — year + set + player + insert + auto + variant
   const parts1: string[] = [];
   if (card.year) parts1.push(String(card.year));
   if (card.setName) parts1.push(card.setName);
   parts1.push(playerName);
+  if (insertName && !card.setName?.toLowerCase().includes(insertName.toLowerCase())) {
+    parts1.push(insertName);
+  }
+  if (autoTag && !insertName.toLowerCase().includes("autograph")) {
+    parts1.push(autoTag);
+  }
   if (card.parallelVariant) parts1.push(card.parallelVariant);
   if (card.graded && card.gradingCompany && card.grade) {
     parts1.push(`${card.gradingCompany} ${card.grade}`);
   }
   queries.push(parts1.join(" "));
 
-  // Query 2: Year + set + player + card number (no variant name, use number instead)
+  // Query 2: Year + set + player + card number + auto
   if (card.cardNumber) {
     const parts2: string[] = [];
     if (card.year) parts2.push(String(card.year));
     if (card.setName) parts2.push(card.setName);
     parts2.push(playerName);
     parts2.push(`#${card.cardNumber.replace(/^#/, "")}`);
+    if (autoTag) parts2.push(autoTag);
     queries.push(parts2.join(" "));
   }
 
-  // Query 3: Broader — year + manufacturer + player + variant
+  // Query 3: Year + manufacturer + player + auto + variant
   const parts3: string[] = [];
   if (card.year) parts3.push(String(card.year));
   if (card.manufacturer) parts3.push(card.manufacturer);
   parts3.push(playerName);
+  if (autoTag) parts3.push(autoTag);
   if (card.parallelVariant) parts3.push(card.parallelVariant);
   queries.push(parts3.join(" "));
+
+  // Query 4: Broadest — year + player + auto (no set restriction)
+  const parts4: string[] = [];
+  if (card.year) parts4.push(String(card.year));
+  parts4.push(playerName);
+  if (autoTag) parts4.push(autoTag);
+  queries.push(parts4.join(" "));
 
   // Deduplicate
   return [...new Set(queries)];

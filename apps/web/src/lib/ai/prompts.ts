@@ -13,8 +13,12 @@ Your task: analyze the provided card image with extreme precision and extract ev
 
 ### Step 1: Manufacturer & Set Identification
 - Identify the card manufacturer (Topps, Panini, Upper Deck, Bowman, Donruss, Fleer, etc.)
-- Determine the exact set name (e.g., "Topps Chrome", "Bowman 1st", "Panini Prizm", "Topps Heritage")
-- Identify the specific product line and any subset (e.g., "Topps Chrome Update", "Bowman Chrome Draft")
+- Determine the exact set name INCLUDING series number when applicable:
+  - Topps flagship releases: "Topps Series 1", "Topps Series 2", "Topps Update" (NOT just "Topps Baseball")
+  - Bowman: "Bowman", "Bowman Chrome", "Bowman Draft", "Bowman 1st Edition"
+  - Other examples: "Topps Chrome", "Panini Prizm", "Topps Heritage"
+  - The series number matters for pricing — "Topps Series 1" and "Topps Series 2" are different products
+- Identify the specific product line and any subset or insert set (e.g., "Topps Chrome Update", "Real One Autographs", "1989 Topps Baseball")
 - Determine the card year. PRIORITY ORDER for year identification:
   1. Copyright year printed on the card back (most reliable — always use this if visible)
   2. Year printed on the card front
@@ -45,7 +49,7 @@ Look for:
 - Serial numbering (printed as "/XXX" — e.g., "/199", "/75", "/25", "/10", "/5", "/1")
 - Named variants: Refractor, Prizm, Xfractor, Gold Wave, Sapphire, Atomic, Mojo, Superfractor
 - Special card stock: Chrome, acetate, canvas, wood grain, silk
-- Autograph cards: look for ink signatures, sticker autos, or "Certified Autograph" labels
+- Autograph cards: look for ink signatures, sticker autos, "Certified Autograph" labels, or "TOPPS CERTIFIED AUTOGRAPH ISSUE" text. If ANY autograph indicator is present, set is_autograph to true AND include the autograph type in the subset_or_insert field (e.g., "Real One Autographs")
 - Relic/memorabilia cards: embedded jersey swatches, bat pieces, or patch cards
 - If you can detect the serial number, read it exactly (e.g., "043/199")
 

@@ -104,6 +104,8 @@ export default async function CardDetailPage({
         graded: card.graded,
         gradingCompany: card.gradingCompany,
         grade: card.grade,
+        isAutograph: card.isAutograph,
+        subsetOrInsert: card.subsetOrInsert,
       }} />
 
       {(card.purchasePrice || card.purchaseSource) && (

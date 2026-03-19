@@ -265,6 +265,7 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
       estimatedValueUsd: priceEstimates.estimatedValueUsd,
       priceTrend: priceEstimates.priceTrend,
       trendPercentage: priceEstimates.trendPercentage,
+      aiRawResponse: cards.aiRawResponse,
     })
     .from(cards)
     .leftJoin(players, eq(cards.playerId, players.id))
@@ -279,7 +280,14 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
     .limit(1);
 
   if (rows.length === 0) return null;
-  return rows[0] as CardWithDetails;
+  const row = rows[0];
+  // Extract AI fields for pricing
+  const aiData = row.aiRawResponse as Record<string, unknown> | null;
+  return {
+    ...row,
+    isAutograph: aiData?.is_autograph === true,
+    subsetOrInsert: (aiData?.subset_or_insert as string) || null,
+  } as CardWithDetails;
 }
 
 // ── Dashboard Stats ──

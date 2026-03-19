@@ -16,6 +16,8 @@ interface CardCompsProps {
     graded?: boolean | null;
     gradingCompany?: string | null;
     grade?: string | null;
+    isAutograph?: boolean;
+    subsetOrInsert?: string | null;
   };
 }
 
@@ -54,6 +56,8 @@ export function CardComps({ card }: CardCompsProps) {
           graded: card.graded ?? false,
           gradingCompany: card.gradingCompany,
           grade: card.grade,
+          isAutograph: card.isAutograph,
+          subsetOrInsert: card.subsetOrInsert,
         });
         clearTimeout(timeout);
         if (!cancelled) setComps(result);

@@ -51,6 +51,8 @@ export async function lookupCardPrice(card: {
   graded?: boolean;
   gradingCompany?: string | null;
   grade?: string | null;
+  isAutograph?: boolean;
+  subsetOrInsert?: string | null;
 }): Promise<PriceLookupResult> {
   const queries = await buildEbayQueries(card);
   const primaryQuery = queries[0];
