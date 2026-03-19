@@ -2,57 +2,60 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { ExternalLink } from "lucide-react";
-import { getCardComps, type CachedComps } from "@/actions/cards";
+import { Button } from "@/components/ui/button";
+import { ExternalLink, RotateCcw } from "lucide-react";
+import { getCardComps, getCardPricingStatus, type CachedComps } from "@/actions/cards";
 
 interface CardCompsProps {
   cardId: string;
 }
 
+type JobStatus = "none" | "pending" | "running" | "completed" | "failed";
+
 export function CardComps({ cardId }: CardCompsProps) {
   const [comps, setComps] = useState<CachedComps | null>(null);
+  const [jobStatus, setJobStatus] = useState<JobStatus>("none");
+  const [jobError, setJobError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  const [elapsed, setElapsed] = useState(0);
 
-  const fetchComps = useCallback(async () => {
-    const data = await getCardComps(cardId);
-    setComps(data);
-    return data.estimate !== null;
+  const fetchData = useCallback(async () => {
+    const [compsData, statusData] = await Promise.all([
+      getCardComps(cardId),
+      getCardPricingStatus(cardId),
+    ]);
+    setComps(compsData);
+    setJobStatus(statusData.status);
+    setJobError(statusData.errorMessage);
+    return { hasData: compsData.estimate !== null, isDone: statusData.status === "completed" || statusData.status === "failed" };
   }, [cardId]);
 
   useEffect(() => {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
-    let tickInterval: ReturnType<typeof setInterval> | null = null;
-    let attempts = 0;
-    const maxAttempts = 20; // ~60 seconds max polling
 
     async function poll() {
-      const hasData = await fetchComps();
-      attempts++;
-
-      if (hasData || attempts >= maxAttempts) {
+      const { hasData, isDone } = await fetchData();
+      if (hasData || isDone) {
         setLoading(false);
         if (pollInterval) clearInterval(pollInterval);
-        if (tickInterval) clearInterval(tickInterval);
       }
     }
 
-    // Initial fetch
     poll();
 
-    // Poll every 3 seconds if no data
+    // Poll every 3 seconds while waiting
     pollInterval = setInterval(poll, 3000);
 
-    // Tick elapsed counter
-    tickInterval = setInterval(() => {
-      setElapsed((e) => e + 1);
-    }, 1000);
+    // Stop after 2 minutes max
+    const timeout = setTimeout(() => {
+      if (pollInterval) clearInterval(pollInterval);
+      setLoading(false);
+    }, 120_000);
 
     return () => {
       if (pollInterval) clearInterval(pollInterval);
-      if (tickInterval) clearInterval(tickInterval);
+      clearTimeout(timeout);
     };
-  }, [fetchComps]);
+  }, [fetchData]);
 
   const hasData = comps?.estimate !== null;
   const isRealData = comps?.estimate && comps.estimate.confidence !== "low";
@@ -87,7 +90,7 @@ export function CardComps({ cardId }: CardCompsProps) {
             {comps.history.length > 0 && (
               <>
                 <div style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground pt-1">
-                  {comps.history.length} comparable {comps.history.some(h => h.sourceName === "eBay") ? "sales" : "listings"}
+                  {comps.history.length} comparable {comps.history.some(h => h.sourceName?.includes("Sold")) ? "sales" : "listings"}
                 </div>
                 <div className="space-y-2">
                   {comps.history.map((h, i) => (
@@ -119,7 +122,7 @@ export function CardComps({ cardId }: CardCompsProps) {
               Last updated: {new Date(comps.estimate.lastUpdated).toLocaleDateString()}
             </p>
           </div>
-        ) : loading ? (
+        ) : jobStatus === "pending" || jobStatus === "running" ? (
           <div className="py-8">
             <div className="flex flex-col items-center gap-4">
               <div className="relative w-48 h-1 bg-secondary rounded-full overflow-hidden">
@@ -129,23 +132,46 @@ export function CardComps({ cardId }: CardCompsProps) {
                 />
               </div>
               <p style={{ fontFamily: "var(--font-display)" }} className="text-base font-light text-white">
-                Scouting the market
+                {jobStatus === "pending" ? "Queued for pricing engine" : "Scouting the market"}
               </p>
               <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
-                Searching eBay sold · 130point · Aggregating comps
-              </p>
-              <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground">
-                {elapsed}s
+                {jobStatus === "pending"
+                  ? "Waiting for engine to pick up job"
+                  : "Searching eBay sold · 130point · Aggregating comps"}
               </p>
             </div>
+          </div>
+        ) : jobStatus === "failed" ? (
+          <div className="py-8 text-center">
+            <p style={{ fontFamily: "var(--font-display)" }} className="text-base font-light text-white">
+              Pricing lookup failed
+            </p>
+            <p className="text-xs text-muted-foreground mt-2">
+              {jobError || "The pricing engine encountered an error"}
+            </p>
+            <Button
+              variant="outline"
+              size="sm"
+              className="mt-4 gap-2"
+              onClick={async () => {
+                setJobStatus("pending");
+                setLoading(true);
+                // Re-trigger by directly calling the server action
+                const { getCardPricingStatus: refresh } = await import("@/actions/cards");
+                // The retry will be handled by the engine on next poll
+              }}
+            >
+              <RotateCcw className="h-3 w-3" />
+              Retry
+            </Button>
           </div>
         ) : (
           <div className="py-8 text-center">
             <p style={{ fontFamily: "var(--font-display)" }} className="text-base font-light text-white">
-              Could not find comps for this card
+              No comps available
             </p>
             <p className="text-xs text-muted-foreground mt-2">
-              Try adjusting the card details or check back later
+              {loading ? "Checking pricing engine..." : "No pricing job found for this card"}
             </p>
           </div>
         )}

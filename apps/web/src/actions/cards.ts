@@ -1,6 +1,6 @@
 "use server";
 
-import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, priceSources, priceHistory } from "@holdsworth/db";
+import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, priceSources, priceHistory, pricingJobs, enqueuePriceLookup } from "@holdsworth/db";
 import { eq, desc, ilike, and, sql, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { CardWithDetails } from "@/types/cards";
@@ -172,8 +172,8 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
   revalidatePath("/cards");
   revalidatePath("/");
 
-  // Fire-and-forget: trigger background price lookup
-  queuePriceLookup(card.id, {
+  // Enqueue price lookup for the pricing engine (separate worker process)
+  await enqueuePriceLookup(card.id, {
     playerName: input.playerName,
     year: input.year,
     setName: input.setName,
@@ -185,81 +185,34 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
     graded: input.graded,
     gradingCompany: input.gradingCompany,
     grade: input.grade,
-  }).catch((err) => console.error("[cards] Background price lookup failed:", err));
+  });
 
   return { id: card.id };
 }
 
 /**
- * Queue a background price lookup for a card.
- * Runs asynchronously — does not block card creation.
- * Stores results in priceEstimates table.
+ * Get the pricing job status for a card.
+ * Used by the frontend to show real engine status instead of blind polling.
  */
-async function queuePriceLookup(cardId: string, card: {
-  playerName: string;
-  year?: number;
-  setName?: string;
-  manufacturer?: string;
-  cardNumber?: string;
-  parallelVariant?: string;
-  isAutograph?: boolean;
-  subsetOrInsert?: string;
-  graded?: boolean;
-  gradingCompany?: string;
-  grade?: string;
-}) {
-  const { lookupCardPrice } = await import("./prices");
+export async function getCardPricingStatus(cardId: string) {
+  const [job] = await db
+    .select({
+      status: pricingJobs.status,
+      errorMessage: pricingJobs.errorMessage,
+      createdAt: pricingJobs.createdAt,
+      completedAt: pricingJobs.completedAt,
+    })
+    .from(pricingJobs)
+    .where(eq(pricingJobs.cardId, cardId))
+    .orderBy(desc(pricingJobs.createdAt))
+    .limit(1);
 
-  console.log(`[prices] Background lookup started for card ${cardId}`);
-  const result = await lookupCardPrice(card);
-
-  if (result.estimatedValue) {
-    const usdToCad = 1.38;
-    await db.insert(priceEstimates).values({
-      cardId,
-      estimatedValueUsd: String(result.estimatedValue.mid),
-      estimatedValueCad: String(Math.round(result.estimatedValue.mid * usdToCad * 100) / 100),
-      confidence: result.dataSources.some(s => !s.includes("AI")) ? "medium" : "low",
-      sampleSize: result.stats?.count ?? 0,
-      priceTrend: "stable",
-    }).onConflictDoUpdate({
-      target: priceEstimates.cardId,
-      set: {
-        estimatedValueUsd: String(result.estimatedValue.mid),
-        estimatedValueCad: String(Math.round(result.estimatedValue.mid * usdToCad * 100) / 100),
-        confidence: result.dataSources.some(s => !s.includes("AI")) ? "medium" : "low",
-        sampleSize: result.stats?.count ?? 0,
-        lastUpdated: new Date(),
-      },
-    });
-    console.log(`[prices] Stored estimate for card ${cardId}: $${result.estimatedValue.mid} USD`);
-  }
-
-  // Store individual comps in priceHistory
-  if (result.listings.length > 0) {
-    // Ensure eBay source exists
-    let [ebaySource] = await db.select().from(priceSources).where(eq(priceSources.name, "eBay")).limit(1);
-    if (!ebaySource) {
-      [ebaySource] = await db.insert(priceSources).values({ name: "eBay", baseUrl: "https://www.ebay.com", scraperType: "playwright" }).returning();
-    }
-
-    for (const listing of result.listings.slice(0, 10)) {
-      await db.insert(priceHistory).values({
-        cardId,
-        sourceId: ebaySource.id,
-        priceUsd: String(listing.price),
-        priceCad: String(Math.round(listing.price * 1.38 * 100) / 100),
-        currencyRate: "1.38",
-        saleDate: listing.date ? new Date(listing.date) : null,
-        listingUrl: listing.url || null,
-        condition: null,
-        graded: false,
-      }).catch(() => {}); // Skip duplicates
-    }
-    console.log(`[prices] Stored ${Math.min(result.listings.length, 10)} comps for card ${cardId}`);
-  }
-
-  revalidatePath(`/cards/${cardId}`);
+  return {
+    status: (job?.status as "pending" | "running" | "completed" | "failed") ?? "none",
+    errorMessage: job?.errorMessage ?? null,
+    createdAt: job?.createdAt ?? null,
+    completedAt: job?.completedAt ?? null,
+  };
 }
 
 // ── Read ──

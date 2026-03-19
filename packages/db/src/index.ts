@@ -9,3 +9,4 @@ export const db = drizzle(client, { schema });
 
 export * from "./schema/index";
 export { schema };
+export { enqueuePriceLookup, type CardPricePayload } from "./jobs";

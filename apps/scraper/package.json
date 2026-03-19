@@ -1,0 +1,21 @@
+{
+  "name": "@holdsworth/scraper",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts"
+  },
+  "dependencies": {
+    "@holdsworth/db": "workspace:*",
+    "@google/genai": "^1.45.0",
+    "cheerio": "^1.2.0",
+    "drizzle-orm": "^0.38.4",
+    "postgres": "^3.4.8"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  }
+}

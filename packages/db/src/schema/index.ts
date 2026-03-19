@@ -5,6 +5,7 @@ export { sets } from "./sets";
 export { cards } from "./cards";
 export { cardPhotos } from "./photos";
 export { priceSources, priceHistory, priceEstimates } from "./prices";
+export { pricingJobs } from "./pricing-jobs";
 export { vendors, vendorProducts, vendorPriceHistory } from "./vendors";
 export { alerts } from "./alerts";
 export { scanSessions } from "./scan-sessions";
