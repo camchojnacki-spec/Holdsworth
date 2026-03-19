@@ -1,10 +1,11 @@
 "use server";
 
 import { scanCardWithGemini, detectCardBounds, type CardScanResponse, type CardCropRegion } from "@/lib/ai/gemini";
+import { matchAgainstReference, applyReferenceCorrections } from "@/lib/ai/reference-matcher";
 
 export interface ScanActionResult {
   success: boolean;
-  data?: CardScanResponse;
+  data?: CardScanResponse & { _aiCorrected?: boolean; _referenceCardId?: string; _subsetOrInsert?: string | null };
   bounds?: CardCropRegion | null;
   backBounds?: CardCropRegion | null;
   error?: string;
@@ -23,7 +24,6 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     }
 
     const validTypes = ["image/jpeg", "image/png", "image/webp"];
-    // On mobile, blob type can be empty — default to jpeg for camera captures
     const frontType = validTypes.includes(frontFile.type) ? frontFile.type : "image/jpeg";
     if (frontFile.type && !validTypes.includes(frontFile.type)) {
       return { success: false, error: `Unsupported image format: ${frontFile.type}. Use JPEG, PNG, or WebP.` };
@@ -32,11 +32,9 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
       return { success: false, error: "Image exceeds 20MB limit" };
     }
 
-    // Convert front to base64
     const frontBuffer = await frontFile.arrayBuffer();
     const frontBase64 = Buffer.from(frontBuffer).toString("base64");
 
-    // Convert back to base64 if provided
     let backBase64: string | undefined;
     let backMimeType: string | undefined;
     if (backFile && backFile.size > 0) {
@@ -45,7 +43,7 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
       backMimeType = validTypes.includes(backFile.type) ? backFile.type : "image/jpeg";
     }
 
-    // Run identification (with optional back) and bounding box detection in parallel
+    // Run identification and bounding box detection in parallel
     const promises: [
       Promise<CardScanResponse>,
       Promise<CardCropRegion | null>,
@@ -56,12 +54,23 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
       backBase64 ? detectCardBounds(backBase64, backMimeType!) : Promise.resolve(null),
     ];
 
-    const [result, bounds, backBounds] = await Promise.all(promises);
+    const [aiResult, bounds, backBounds] = await Promise.all(promises);
+
+    // ── Reference matching: correct AI output against known cards ──
+    let finalResult: ScanActionResult["data"] = aiResult;
+    const refMatch = await matchAgainstReference(aiResult);
+    if (refMatch) {
+      console.log(`[scanner] Reference match found: ${aiResult.card_number} → ${refMatch.correctedSetName} (${refMatch.subsetName || "base"})`);
+      finalResult = applyReferenceCorrections(aiResult, refMatch);
+    } else {
+      console.log(`[scanner] No reference match for ${aiResult.card_number} — using AI identification as-is`);
+    }
+
     const processingTimeMs = Date.now() - startTime;
 
     return {
       success: true,
-      data: result,
+      data: finalResult,
       bounds,
       backBounds,
       processingTimeMs,

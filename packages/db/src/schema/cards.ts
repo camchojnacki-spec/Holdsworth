@@ -12,6 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { players } from "./players";
 import { sets } from "./sets";
+import { referenceCards } from "./reference";
 
 export const cards = pgTable(
   "cards",
@@ -41,6 +42,13 @@ export const cards = pgTable(
     // Status
     status: varchar("status", { length: 50 }).default("in_collection").notNull(),
     notes: text("notes"),
+
+    // Reference matching
+    referenceCardId: uuid("reference_card_id").references(() => referenceCards.id),
+    subsetOrInsert: varchar("subset_or_insert", { length: 255 }),
+    isAutograph: boolean("is_autograph").default(false),
+    isRelic: boolean("is_relic").default(false),
+    aiCorrected: boolean("ai_corrected").default(false),
 
     // AI scan data
     aiRawResponse: jsonb("ai_raw_response"),

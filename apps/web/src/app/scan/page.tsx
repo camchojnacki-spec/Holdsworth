@@ -57,6 +57,42 @@ function compressImage(imageDataUrl: string, maxWidth = 1000): Promise<string> {
   });
 }
 
+function centerCropCardRatio(imageDataUrl: string): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const imgW = img.width;
+      const imgH = img.height;
+      // Card ratio is 2.5:3.5 = 5:7
+      const cardRatio = 5 / 7;
+      const imgRatio = imgW / imgH;
+      let cropW: number, cropH: number;
+      if (imgRatio > cardRatio) {
+        // Image is wider than card — crop sides, keep 70% of width
+        cropH = imgH * 0.85;
+        cropW = cropH * cardRatio;
+      } else {
+        // Image is taller — crop top/bottom, keep 85% of height
+        cropW = imgW * 0.85;
+        cropH = cropW / cardRatio;
+      }
+      const sx = (imgW - cropW) / 2;
+      const sy = (imgH - cropH) / 2;
+      const scale = Math.min(1, MAX_CARD_WIDTH / cropW);
+      const tw = Math.round(cropW * scale);
+      const th = Math.round(cropH * scale);
+      const canvas = document.createElement("canvas");
+      canvas.width = tw;
+      canvas.height = th;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(imageDataUrl); return; }
+      ctx.drawImage(img, sx, sy, cropW, cropH, 0, 0, tw, th);
+      resolve(canvas.toDataURL("image/jpeg", 0.90));
+    };
+    img.src = imageDataUrl;
+  });
+}
+
 function dataUrlToBlob(dataUrl: string): Promise<Blob> {
   return fetch(dataUrl).then(r => r.blob());
 }
@@ -207,8 +243,9 @@ export default function ScanPage() {
         const cropped = await cropCardFromImage(frontDataUrl, response.bounds);
         setCroppedPreview(cropped);
       } else {
-        const compressed = await compressImage(frontDataUrl, MAX_CARD_WIDTH);
-        setCroppedPreview(compressed);
+        // Gemini crop failed — use center-crop at card aspect ratio as fallback
+        const centerCropped = await centerCropCardRatio(frontDataUrl);
+        setCroppedPreview(centerCropped);
       }
       setState("results");
     } else {
@@ -234,6 +271,7 @@ export default function ScanPage() {
     if (!result) return;
     setState("saving");
     try {
+      const extResult = result as typeof result & { _aiCorrected?: boolean; _referenceCardId?: string; _subsetOrInsert?: string | null };
       const { id } = await createCard({
         playerName: result.player_name,
         team: result.team,
@@ -251,6 +289,10 @@ export default function ScanPage() {
         grade: result.grade ?? undefined,
         aiRawResponse: result as unknown as Record<string, unknown>,
         photoUrl: croppedPreview ?? frontPreview ?? undefined,
+        isAutograph: result.is_autograph,
+        subsetOrInsert: extResult._subsetOrInsert ?? result.subset_or_insert ?? undefined,
+        referenceCardId: extResult._referenceCardId,
+        aiCorrected: extResult._aiCorrected,
       });
       router.push(`/cards/${id}`);
     } catch {

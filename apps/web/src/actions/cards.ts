@@ -30,6 +30,11 @@ export interface CreateCardInput {
   notes?: string;
   aiRawResponse?: Record<string, unknown>;
   photoUrl?: string;
+  isAutograph?: boolean;
+  isRelic?: boolean;
+  subsetOrInsert?: string;
+  referenceCardId?: string;
+  aiCorrected?: boolean;
 }
 
 export async function createCard(input: CreateCardInput): Promise<{ id: string }> {
@@ -136,6 +141,11 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
       purchaseSource: input.purchaseSource ?? null,
       notes: input.notes ?? null,
       aiRawResponse: input.aiRawResponse ?? null,
+      referenceCardId: input.referenceCardId ?? null,
+      subsetOrInsert: input.subsetOrInsert ?? null,
+      isAutograph: input.isAutograph ?? false,
+      isRelic: input.isRelic ?? false,
+      aiCorrected: input.aiCorrected ?? false,
       status: "in_collection",
     })
     .returning();
@@ -265,7 +275,10 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
       estimatedValueUsd: priceEstimates.estimatedValueUsd,
       priceTrend: priceEstimates.priceTrend,
       trendPercentage: priceEstimates.trendPercentage,
-      aiRawResponse: cards.aiRawResponse,
+      isAutograph: cards.isAutograph,
+      subsetOrInsert: cards.subsetOrInsert,
+      aiCorrected: cards.aiCorrected,
+      referenceCardId: cards.referenceCardId,
     })
     .from(cards)
     .leftJoin(players, eq(cards.playerId, players.id))
@@ -280,14 +293,7 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
     .limit(1);
 
   if (rows.length === 0) return null;
-  const row = rows[0];
-  // Extract AI fields for pricing
-  const aiData = row.aiRawResponse as Record<string, unknown> | null;
-  return {
-    ...row,
-    isAutograph: aiData?.is_autograph === true,
-    subsetOrInsert: (aiData?.subset_or_insert as string) || null,
-  } as CardWithDetails;
+  return rows[0] as CardWithDetails;
 }
 
 // ── Dashboard Stats ──

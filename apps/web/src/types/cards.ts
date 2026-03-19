@@ -30,6 +30,8 @@ export interface CardWithDetails {
   updatedAt: Date;
   isAutograph?: boolean;
   subsetOrInsert?: string | null;
+  aiCorrected?: boolean;
+  referenceCardId?: string | null;
 }
 
 export type CardStatus = "in_collection" | "for_sale" | "sold" | "traded";

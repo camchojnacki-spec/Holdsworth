@@ -67,10 +67,13 @@ export default async function CardDetailPage({
               <Field label="Set" value={card.setName} />
               <Field label="Manufacturer" value={card.manufacturerName} />
               {card.parallelVariant && <Field label="Parallel" value={card.parallelVariant} highlight />}
+              {card.subsetOrInsert && <Field label="Insert Set" value={card.subsetOrInsert} />}
 
               <div className="flex flex-wrap gap-1.5 pt-2">
                 {card.isRookieCard && <Badge variant="default">RC</Badge>}
+                {card.isAutograph && <Badge variant="default">Auto</Badge>}
                 {card.graded && <Badge variant="secondary">{card.gradingCompany} {card.grade}</Badge>}
+                {card.aiCorrected && <Badge variant="secondary">Confirmed</Badge>}
               </div>
             </CardContent>
           </Card>

@@ -1,5 +1,6 @@
 export { players } from "./players";
 export { manufacturers } from "./manufacturers";
+export { setProducts, subsets, referenceCards, parallelTypes } from "./reference";
 export { sets } from "./sets";
 export { cards } from "./cards";
 export { cardPhotos } from "./photos";
