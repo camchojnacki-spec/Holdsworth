@@ -139,32 +139,60 @@ The box_2d coordinates must be in the range 0-1000, representing the position re
   });
 
   const text = response.text ?? "";
+  console.log("[detectCardBounds] Raw Gemini response:", text);
 
   // Parse the box_2d array from the response
   const arrayMatch = text.match(/\[[\s\S]*\]/);
-  if (!arrayMatch) return null;
+  if (!arrayMatch) {
+    console.log("[detectCardBounds] No array match found in response");
+    return null;
+  }
 
   try {
     const parsed = JSON.parse(arrayMatch[0]);
-    const detection = Array.isArray(parsed) ? parsed[0] : parsed;
-    const box = detection?.box_2d;
+    console.log("[detectCardBounds] Parsed:", JSON.stringify(parsed));
 
-    if (!box || !Array.isArray(box) || box.length !== 4) return null;
+    // Handle both [{box_2d: [...]}] and [[ymin,xmin,ymax,xmax]] formats
+    let box: number[] | undefined;
+    if (Array.isArray(parsed) && parsed.length > 0) {
+      const first = parsed[0];
+      if (first?.box_2d && Array.isArray(first.box_2d)) {
+        box = first.box_2d;
+      } else if (Array.isArray(first) && first.length === 4) {
+        // Gemini might return [[ymin,xmin,ymax,xmax]] directly
+        box = first;
+      } else if (typeof first === "number" && parsed.length === 4) {
+        // Or just [ymin,xmin,ymax,xmax] flat
+        box = parsed;
+      }
+    }
+
+    if (!box || box.length !== 4) {
+      console.log("[detectCardBounds] Could not extract box_2d from parsed data");
+      return null;
+    }
 
     const [ymin, xmin, ymax, xmax] = box.map((v: number) => v / 1000);
+    console.log("[detectCardBounds] Normalized coords:", { xmin, ymin, xmax, ymax });
 
     // Validate
     if (xmin < 0 || xmin >= xmax || ymin < 0 || ymin >= ymax ||
-        xmax > 1.05 || ymax > 1.05) return null;
+        xmax > 1.05 || ymax > 1.05) {
+      console.log("[detectCardBounds] Validation failed");
+      return null;
+    }
 
-    return {
+    const result = {
       x: Math.max(0, xmin),
       y: Math.max(0, ymin),
       width: Math.min(1, xmax) - Math.max(0, xmin),
       height: Math.min(1, ymax) - Math.max(0, ymin),
       rotation: 0,
     };
-  } catch {
+    console.log("[detectCardBounds] Returning crop region:", result);
+    return result;
+  } catch (err) {
+    console.log("[detectCardBounds] Parse error:", err);
     return null;
   }
 }
