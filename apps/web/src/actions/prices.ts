@@ -91,9 +91,20 @@ export async function lookupCardPrice(card: {
       contents: [{
         role: "user",
         parts: [{
-          text: `You are a baseball card market analyst. Estimate the current market value and provide recent comparable sales data for this card:
+          text: `You are a baseball card market analyst. Estimate the current market value for this EXACT card. Do NOT substitute a different variant, parallel, or edition.
 
-${query}
+EXACT CARD TO PRICE:
+- Player: ${card.playerName}
+- Year: ${card.year || "unknown"}
+- Set: ${card.setName || "unknown"}
+- Manufacturer: ${card.manufacturer || "unknown"}
+- Card Number: ${card.cardNumber || "unknown"}
+- Parallel/Variant: ${card.parallelVariant || "base card (no parallel)"}
+${card.graded ? `- Graded: ${card.gradingCompany} ${card.grade}` : "- Raw (ungraded)"}
+
+Search query for reference: ${query}
+
+CRITICAL: Price this EXACT parallel/variant. A "${card.parallelVariant || "base"}" is different from other parallels of the same card. Do not confuse it with refractors, logofractors, or other variants.
 
 Return ONLY valid JSON:
 {
