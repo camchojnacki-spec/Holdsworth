@@ -134,12 +134,15 @@ The box_2d coordinates must be in the range 0-1000, representing the position re
     ],
     config: {
       temperature: 0.1,
-      maxOutputTokens: 256,
+      maxOutputTokens: 1024,
     },
   });
 
-  const text = response.text ?? "";
+  let text = response.text ?? "";
   console.log("[detectCardBounds] Raw Gemini response:", text);
+
+  // Strip markdown code fences if present
+  text = text.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim();
 
   // Parse the box_2d array from the response
   const arrayMatch = text.match(/\[[\s\S]*\]/);
