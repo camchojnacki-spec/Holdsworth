@@ -111,13 +111,12 @@ export async function detectCardBounds(
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
-    systemInstruction: "Return bounding boxes as a JSON array with labels. Never return masks or code fencing.",
     contents: [
       {
         role: "user",
         parts: [
           {
-            text: `Detect the trading card in this image. Output a JSON list where each entry contains the 2D bounding box in key "box_2d" and text label in key "label".`,
+            text: `Detect the trading card in this image. Return bounding boxes as a JSON array. Each entry has "box_2d" (array of [ymin, xmin, ymax, xmax] as integers 0-1000) and "label". Never return masks or code fencing.`,
           },
           {
             inlineData: {
