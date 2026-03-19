@@ -116,11 +116,10 @@ export async function detectCardBounds(
         role: "user",
         parts: [
           {
-            text: `Find the trading card in this image. Return ONLY valid JSON with the bounding rectangle of the card as fractions of image dimensions (0.0 to 1.0).
+            text: `Locate the exact edges of the trading card in this image. The card is a standard rectangular trading card being held or photographed.
 
-Add a small margin (about 2%) around the card edges so nothing is cut off.
+Return ONLY valid JSON with the TIGHT bounding rectangle that touches the card edges precisely. Do NOT include fingers, hands, background, or any area outside the card border. The rectangle should align with the printed card border itself.
 
-Return this exact JSON format:
 {
   "x": 0.0,
   "y": 0.0,
@@ -129,11 +128,14 @@ Return this exact JSON format:
   "rotation": 0
 }
 
-x = left edge of card (0=image left, 1=image right)
-y = top edge of card (0=image top, 1=image bottom)
-width = card width as fraction of image width
-height = card height as fraction of image height
-rotation = degrees clockwise the card is tilted (0 if straight, positive if tilted clockwise)`,
+All values are fractions of image dimensions (0.0 to 1.0):
+- x = left edge of the card border
+- y = top edge of the card border
+- width = card width (right edge minus left edge)
+- height = card height (bottom edge minus top edge)
+- rotation = degrees the card is tilted clockwise (0 if upright)
+
+Be precise. The crop should show ONLY the card with no surrounding background visible.`,
           },
           {
             inlineData: {

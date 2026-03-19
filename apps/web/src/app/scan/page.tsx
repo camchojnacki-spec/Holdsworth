@@ -178,10 +178,13 @@ export default function ScanPage() {
           setResult(response.data);
           setProcessingTime(response.processingTimeMs ?? null);
           // Crop card from image if bounds detected, otherwise compress
+          // Wait for crop to complete BEFORE showing results
           if (response.bounds && dataUrl) {
-            cropCardFromImage(dataUrl, response.bounds).then(setCroppedPreview);
+            const cropped = await cropCardFromImage(dataUrl, response.bounds);
+            setCroppedPreview(cropped);
           } else if (dataUrl) {
-            compressImage(dataUrl, MAX_CARD_WIDTH).then(setCroppedPreview);
+            const compressed = await compressImage(dataUrl, MAX_CARD_WIDTH);
+            setCroppedPreview(compressed);
           }
           setState("results");
         } else {
@@ -223,16 +226,18 @@ export default function ScanPage() {
     if (response.success && response.data) {
       setResult(response.data);
       setProcessingTime(response.processingTimeMs ?? null);
-      // Crop card from uploaded image if bounds detected, otherwise compress
+      // Crop card from uploaded image, wait for completion before showing results
       const fullDataUrl = await new Promise<string>((res) => {
         const r2 = new FileReader();
         r2.onload = (ev2) => res(ev2.target?.result as string);
         r2.readAsDataURL(file);
       });
       if (response.bounds) {
-        cropCardFromImage(fullDataUrl, response.bounds).then(setCroppedPreview);
+        const cropped = await cropCardFromImage(fullDataUrl, response.bounds);
+        setCroppedPreview(cropped);
       } else {
-        compressImage(fullDataUrl, MAX_CARD_WIDTH).then(setCroppedPreview);
+        const compressed = await compressImage(fullDataUrl, MAX_CARD_WIDTH);
+        setCroppedPreview(compressed);
       }
       setState("results");
     } else {
