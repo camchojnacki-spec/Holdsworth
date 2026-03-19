@@ -2,8 +2,10 @@ import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
   transpilePackages: ["@holdsworth/db"],
-  serverActions: {
-    bodySizeLimit: "20mb",
+  experimental: {
+    serverActions: {
+      bodySizeLimit: "20mb",
+    },
   },
 };
 
