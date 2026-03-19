@@ -300,11 +300,14 @@ function preFilterListings(listings: SoldListing[], card: CardPricePayload): Sol
       });
 
       if (hasShortPrint) {
-        score -= 10; // Penalty — this is likely a different, more valuable card
-        breakdown.push(`parallel:-10(/${numMatch![1]})`);
+        const printRun = parseInt(numMatch![1]);
+        // Harder penalty for rarer parallels — a /5 is a completely different card
+        const penalty = printRun <= 25 ? -35 : printRun <= 99 ? -25 : -15;
+        score += penalty;
+        breakdown.push(`parallel:${penalty}(/${printRun})`);
       } else if (hasColorParallel) {
-        score -= 5;
-        breakdown.push("parallel:-5(color)");
+        score -= 15; // Color parallels also meaningfully different value
+        breakdown.push("parallel:-15(color)");
       } else {
         score += 15;
         breakdown.push("parallel:15(base)");
@@ -337,9 +340,14 @@ function preFilterListings(listings: SoldListing[], card: CardPricePayload): Sol
 
     // ── Disqualifiers (5 pts) ──
     const isLot = lotIndicators.some((ind) => titleLower.includes(ind));
+    // 130point includes "Best Offer" sale type in the HTML — check if price might be unreliable
+    const isBestOffer = titleLower.includes("best offer") || listing.title.includes("Best Offer");
     if (isLot) {
-      score -= 20; // Hard penalty
+      score -= 20;
       breakdown.push("disqualify:-20(lot)");
+    } else if (isBestOffer) {
+      score -= 10; // Price shown may not be actual sale price
+      breakdown.push("disqualify:-10(bestOffer)");
     } else {
       score += 5;
       breakdown.push("disqualify:5(clean)");

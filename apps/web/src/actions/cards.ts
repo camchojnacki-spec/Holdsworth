@@ -215,6 +215,68 @@ export async function getCardPricingStatus(cardId: string) {
   };
 }
 
+/**
+ * Force re-scout the market for a card.
+ * Bypasses the 24-hour freshness check and enqueues a new pricing job.
+ */
+export async function rescoutCard(cardId: string) {
+  // Delete any existing pending/running jobs for this card
+  await db
+    .delete(pricingJobs)
+    .where(
+      and(
+        eq(pricingJobs.cardId, cardId),
+        or(eq(pricingJobs.status, "pending"), eq(pricingJobs.status, "running"))
+      )
+    );
+
+  // Clear existing price data so fresh results replace them
+  await db.delete(priceHistory).where(eq(priceHistory.cardId, cardId));
+  await db.delete(priceEstimates).where(eq(priceEstimates.cardId, cardId));
+
+  // Get card data for the payload
+  const [card] = await db
+    .select({
+      playerName: players.name,
+      year: cards.year,
+      setName: sets.name,
+      manufacturer: manufacturers.name,
+      cardNumber: cards.cardNumber,
+      parallelVariant: cards.parallelVariant,
+      isAutograph: cards.isAutograph,
+      subsetOrInsert: cards.subsetOrInsert,
+      graded: cards.graded,
+      gradingCompany: cards.gradingCompany,
+      grade: cards.grade,
+    })
+    .from(cards)
+    .leftJoin(players, eq(cards.playerId, players.id))
+    .leftJoin(sets, eq(cards.setId, sets.id))
+    .leftJoin(manufacturers, eq(sets.manufacturerId, manufacturers.id))
+    .where(eq(cards.id, cardId))
+    .limit(1);
+
+  if (!card?.playerName) return { success: false };
+
+  // Enqueue fresh job (bypasses freshness check since we deleted the estimate)
+  await enqueuePriceLookup(cardId, {
+    playerName: card.playerName,
+    year: card.year ?? undefined,
+    setName: card.setName ?? undefined,
+    manufacturer: card.manufacturer ?? undefined,
+    cardNumber: card.cardNumber ?? undefined,
+    parallelVariant: card.parallelVariant ?? undefined,
+    isAutograph: card.isAutograph ?? undefined,
+    subsetOrInsert: card.subsetOrInsert ?? undefined,
+    graded: card.graded ?? undefined,
+    gradingCompany: card.gradingCompany ?? undefined,
+    grade: card.grade ?? undefined,
+  });
+
+  revalidatePath(`/cards/${cardId}`);
+  return { success: true };
+}
+
 // ── Read ──
 
 export async function getCards(filters?: {

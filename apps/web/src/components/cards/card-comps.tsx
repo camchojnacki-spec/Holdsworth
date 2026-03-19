@@ -4,7 +4,7 @@ import { useEffect, useState, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ExternalLink, RotateCcw } from "lucide-react";
-import { getCardComps, getCardPricingStatus, type CachedComps } from "@/actions/cards";
+import { getCardComps, getCardPricingStatus, rescoutCard, type CachedComps } from "@/actions/cards";
 
 interface CardCompsProps {
   cardId: string;
@@ -17,6 +17,17 @@ export function CardComps({ cardId }: CardCompsProps) {
   const [jobStatus, setJobStatus] = useState<JobStatus>("none");
   const [jobError, setJobError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rescouting, setRescouting] = useState(false);
+
+  const handleRescout = async () => {
+    setRescouting(true);
+    setComps(null);
+    setJobStatus("pending");
+    setLoading(true);
+    await rescoutCard(cardId);
+    setRescouting(false);
+    // Polling will pick up the new job status
+  };
 
   const fetchData = useCallback(async () => {
     const [compsData, statusData] = await Promise.all([
@@ -65,11 +76,24 @@ export function CardComps({ cardId }: CardCompsProps) {
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
           <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">Market Comps</CardTitle>
-          {hasData && (
-            <span style={{ fontFamily: "var(--font-mono)" }} className={`text-[10px] tracking-wider uppercase ${isRealData ? "text-[var(--color-green-light)]" : "text-muted-foreground"}`}>
-              {isRealData ? `${comps!.estimate!.sampleSize} comps` : "AI Estimated"}
-            </span>
-          )}
+          <div className="flex items-center gap-3">
+            {hasData && (
+              <span style={{ fontFamily: "var(--font-mono)" }} className={`text-[10px] tracking-wider uppercase ${isRealData ? "text-[var(--color-green-light)]" : "text-muted-foreground"}`}>
+                {isRealData ? `${comps!.estimate!.sampleSize} comps` : "AI Estimated"}
+              </span>
+            )}
+            {(hasData || jobStatus === "completed" || jobStatus === "failed" || jobStatus === "none") && !rescouting && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleRescout}
+                className="gap-1.5 text-muted-foreground hover:text-[var(--color-burg-light)] h-7 px-2"
+              >
+                <RotateCcw className="h-3 w-3" />
+                <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase">Re-scout</span>
+              </Button>
+            )}
+          </div>
         </div>
       </CardHeader>
       <CardContent>
