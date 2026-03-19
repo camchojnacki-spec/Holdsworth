@@ -52,7 +52,7 @@ export async function lookupCardPrice(card: {
   gradingCompany?: string | null;
   grade?: string | null;
 }): Promise<PriceLookupResult> {
-  const queries = buildEbayQueries(card);
+  const queries = await buildEbayQueries(card);
   const primaryQuery = queries[0];
   const allListings: SoldListing[] = [];
   const sourceUrls: { ebay?: string; oneThirtyPoint?: string } = {};

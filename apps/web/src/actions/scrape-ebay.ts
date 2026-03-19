@@ -146,7 +146,7 @@ export async function scrapeEbaySold(query: string): Promise<{
  * Build search queries for a card, from most specific to broadest.
  * Returns multiple queries to try in order.
  */
-export function buildEbayQueries(card: {
+export async function buildEbayQueries(card: {
   playerName: string;
   year?: number | null;
   setName?: string | null;
