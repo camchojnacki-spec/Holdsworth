@@ -134,7 +134,7 @@ export async function matchAgainstReference(
 export async function applyReferenceCorrections(
   aiResult: CardScanResponse,
   match: ReferenceMatch
-): CardScanResponse & { _aiCorrected: boolean; _referenceCardId: string; _subsetOrInsert: string | null } {
+): Promise<CardScanResponse & { _aiCorrected: boolean; _referenceCardId: string; _subsetOrInsert: string | null }> {
   return {
     ...aiResult,
     set_name: match.correctedSetName,

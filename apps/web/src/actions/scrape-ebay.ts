@@ -170,7 +170,7 @@ export async function buildEbayQueries(card: {
   grade?: string | null;
   isAutograph?: boolean;
   subsetOrInsert?: string | null;
-}): string[] {
+}): Promise<string[]> {
   const queries: string[] = [];
 
   // Remove accents for eBay search compatibility
