@@ -1,10 +1,11 @@
 "use server";
 
-import { scanCardWithGemini, type CardScanResponse } from "@/lib/ai/gemini";
+import { scanCardWithGemini, detectCardBounds, type CardScanResponse, type CardBoundingBox } from "@/lib/ai/gemini";
 
 export interface ScanActionResult {
   success: boolean;
   data?: CardScanResponse;
+  bounds?: CardBoundingBox | null;
   error?: string;
   processingTimeMs?: number;
 }
@@ -33,13 +34,18 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     const buffer = await file.arrayBuffer();
     const base64 = Buffer.from(buffer).toString("base64");
 
-    // Send to Gemini
-    const result = await scanCardWithGemini(base64, file.type);
+    // Run identification and bounding box detection in parallel
+    const [result, bounds] = await Promise.all([
+      scanCardWithGemini(base64, file.type),
+      detectCardBounds(base64, file.type),
+    ]);
+
     const processingTimeMs = Date.now() - startTime;
 
     return {
       success: true,
       data: result,
+      bounds,
       processingTimeMs,
     };
   } catch (err) {

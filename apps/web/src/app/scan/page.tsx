@@ -9,14 +9,73 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Check, X, RotateCcw, Camera, Upload, SwitchCamera } from "lucide-react";
 import { scanCard, type ScanActionResult } from "@/actions/scanner";
 import { createCard } from "@/actions/cards";
-import type { CardScanResponse } from "@/lib/ai/gemini";
+import type { CardScanResponse, CardBoundingBox } from "@/lib/ai/gemini";
 
 type ScanState = "idle" | "camera" | "analyzing" | "results" | "saving" | "error";
+
+/**
+ * Crop and straighten a card from an image using AI-detected bounding box.
+ */
+function cropCardFromImage(imageDataUrl: string, bounds: CardBoundingBox): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(imageDataUrl); return; }
+
+      const w = img.width;
+      const h = img.height;
+
+      // Get pixel coordinates of the bounding box
+      const tl = { x: bounds.topLeft.x * w, y: bounds.topLeft.y * h };
+      const tr = { x: bounds.topRight.x * w, y: bounds.topRight.y * h };
+      const bl = { x: bounds.bottomLeft.x * w, y: bounds.bottomLeft.y * h };
+      const br = { x: bounds.bottomRight.x * w, y: bounds.bottomRight.y * h };
+
+      // Calculate card dimensions
+      const cardW = Math.max(
+        Math.hypot(tr.x - tl.x, tr.y - tl.y),
+        Math.hypot(br.x - bl.x, br.y - bl.y)
+      );
+      const cardH = Math.max(
+        Math.hypot(bl.x - tl.x, bl.y - tl.y),
+        Math.hypot(br.x - tr.x, br.y - tr.y)
+      );
+
+      // Standard card aspect is 2.5:3.5
+      const targetW = Math.round(cardW);
+      const targetH = Math.round(cardW * 3.5 / 2.5);
+
+      canvas.width = targetW;
+      canvas.height = targetH;
+
+      // Use perspective transform via drawImage with rotation
+      const rotation = (bounds.rotation || 0) * Math.PI / 180;
+      const cx = (tl.x + tr.x + bl.x + br.x) / 4;
+      const cy = (tl.y + tr.y + bl.y + br.y) / 4;
+
+      ctx.save();
+      ctx.translate(targetW / 2, targetH / 2);
+      ctx.rotate(-rotation);
+      ctx.drawImage(
+        img,
+        cx - cardW / 2, cy - cardH / 2, cardW, cardH,
+        -targetW / 2, -targetH / 2, targetW, targetH
+      );
+      ctx.restore();
+
+      resolve(canvas.toDataURL("image/jpeg", 0.95));
+    };
+    img.src = imageDataUrl;
+  });
+}
 
 export default function ScanPage() {
   const router = useRouter();
   const [state, setState] = useState<ScanState>("idle");
   const [preview, setPreview] = useState<string | null>(null);
+  const [croppedPreview, setCroppedPreview] = useState<string | null>(null);
   const [result, setResult] = useState<CardScanResponse | null>(null);
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -109,6 +168,10 @@ export default function ScanPage() {
         if (response.success && response.data) {
           setResult(response.data);
           setProcessingTime(response.processingTimeMs ?? null);
+          // Crop card from image if bounds detected
+          if (response.bounds && dataUrl) {
+            cropCardFromImage(dataUrl, response.bounds).then(setCroppedPreview);
+          }
           setState("results");
         } else {
           setError(response.error ?? "Pull did not resolve. Adjust angle or lighting.");
@@ -149,6 +212,17 @@ export default function ScanPage() {
     if (response.success && response.data) {
       setResult(response.data);
       setProcessingTime(response.processingTimeMs ?? null);
+      // Crop card from uploaded image if bounds detected
+      if (response.bounds) {
+        const reader2 = new FileReader();
+        reader2.onload = (ev2) => {
+          const fullDataUrl = ev2.target?.result as string;
+          if (fullDataUrl && response.bounds) {
+            cropCardFromImage(fullDataUrl, response.bounds).then(setCroppedPreview);
+          }
+        };
+        reader2.readAsDataURL(file);
+      }
       setState("results");
     } else {
       setError(response.error ?? "Pull did not resolve. Adjust angle or lighting.");
@@ -177,7 +251,7 @@ export default function ScanPage() {
         gradingCompany: result.grading_company ?? undefined,
         grade: result.grade ?? undefined,
         aiRawResponse: result as unknown as Record<string, unknown>,
-        photoUrl: preview ?? undefined,
+        photoUrl: croppedPreview ?? preview ?? undefined,
       });
 
       router.push(`/cards/${id}`);
@@ -191,6 +265,7 @@ export default function ScanPage() {
     stopCamera();
     setState("idle");
     setPreview(null);
+    setCroppedPreview(null);
     setResult(null);
     setError(null);
     setProcessingTime(null);
@@ -323,7 +398,14 @@ export default function ScanPage() {
           <div className="grid gap-4 md:grid-cols-2">
             <Card>
               <CardContent className="p-4">
-                {preview && <img src={preview} alt="Scanned card" className="w-full rounded-lg" />}
+                {/* Show cropped card if available, otherwise full image */}
+                {(croppedPreview || preview) && (
+                  <img
+                    src={croppedPreview ?? preview ?? ""}
+                    alt="Scanned card"
+                    className="w-full rounded-lg"
+                  />
+                )}
                 {processingTime && (
                   <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground mt-3 text-center">
                     Identified in {(processingTime / 1000).toFixed(1)}s
