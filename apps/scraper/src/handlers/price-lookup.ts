@@ -78,13 +78,16 @@ export async function handlePriceLookup(
   const soldFiltered = preFiltered.filter((l) => l.source !== "ebay-active" && !l.excluded);
   const allFiltered = preFiltered.filter((l) => !l.excluded);
 
-  log("price-lookup", `Pre-filter: ${allListings.length} → ${allFiltered.length} listings (${allListings.length - allFiltered.length} excluded)`, { jobId });
+  const highConfidence = allFiltered.filter((l) => (l.matchScore ?? 0) >= HIGH_CONFIDENCE_THRESHOLD);
+  log("price-lookup", `Scoring: ${allListings.length} total → ${allFiltered.length} passed (${highConfidence.length} high confidence, ${allListings.length - allFiltered.length} excluded)`, { jobId });
 
   // ══════════════════════════════════════════
   // LAYER 2: Gemini smart analysis
   // ══════════════════════════════════════════
   let estimateUsd: number | null = null;
-  const soldPrices = soldFiltered.map((l) => l.price).sort((a, b) => a - b);
+  // Prefer high-confidence sold listings, then all sold, then all listings
+  const highConfSold = soldFiltered.filter((l) => (l.matchScore ?? 0) >= HIGH_CONFIDENCE_THRESHOLD);
+  const soldPrices = (highConfSold.length >= 3 ? highConfSold : soldFiltered).map((l) => l.price).sort((a, b) => a - b);
   const allPrices = allFiltered.map((l) => l.price).sort((a, b) => a - b);
   const prices = soldPrices.length > 0 ? soldPrices : allPrices;
 
@@ -173,95 +176,190 @@ export async function handlePriceLookup(
 }
 
 // ══════════════════════════════════════════
-// LAYER 1: Code-based pre-filter
+// LAYER 1: Scoring Matrix
 // ══════════════════════════════════════════
 
 /**
- * Fast, free filtering before Gemini analysis.
- * Removes obvious non-matches: wrong parallels, lots, graded vs raw mismatches.
+ * Score each listing against the card on multiple attributes.
+ * Each attribute contributes weighted points to a total score (0-100).
+ * Listings below the threshold are excluded.
+ *
+ * SCORING WEIGHTS:
+ *   Card Number match:   35 pts  (strongest identifier)
+ *   Player Name match:   20 pts  (must be the right player)
+ *   Year match:          10 pts  (right year)
+ *   Set/Product match:   10 pts  (Topps Series 1 vs Chrome vs Heritage)
+ *   Parallel match:       15 pts (base vs Red vs Gold — critical for value)
+ *   Condition match:      5 pts  (graded vs raw)
+ *   No disqualifiers:     5 pts  (not a lot, not best-offer-strikethrough)
+ *
+ * THRESHOLD: 60/100 to include, 80/100 for high confidence
  */
+const MATCH_THRESHOLD = 60;
+const HIGH_CONFIDENCE_THRESHOLD = 80;
+
 function preFilterListings(listings: SoldListing[], card: CardPricePayload): SoldListing[] {
+  const cardNumber = card.cardNumber?.trim()?.toLowerCase() || "";
+  const cardNumberVariants = cardNumber ? [
+    cardNumber,
+    cardNumber.replace(/-/g, " "),
+    cardNumber.replace(/-/g, ""),
+    `#${cardNumber}`,
+  ] : [];
+
+  const playerName = card.playerName
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+  const playerLastName = playerName.split(/\s+/).pop() || playerName;
+
+  const year = card.year ? String(card.year) : "";
+  const setName = (card.setName || "").toLowerCase();
+  const setWords = setName.split(/\s+/).filter((w) => w.length > 2 && !["the", "and", "topps"].includes(w));
+
   const cardParallel = (card.parallelVariant || "").toLowerCase();
   const isBaseCard = !cardParallel || cardParallel === "base" || cardParallel === "base card";
 
-  // ── PRIMARY GATE: Card number match ──
-  // If we know the card number, the listing MUST contain it.
-  // This is the single most effective filter — different card numbers = different cards.
-  const cardNumber = card.cardNumber?.trim();
-  const cardNumberVariants: string[] = [];
-  if (cardNumber) {
-    cardNumberVariants.push(cardNumber.toLowerCase());
-    // Also match with spaces/hyphens swapped: "90A-LAC" → "90a lac", "90a-lac"
-    cardNumberVariants.push(cardNumber.toLowerCase().replace(/-/g, " "));
-    cardNumberVariants.push(cardNumber.toLowerCase().replace(/-/g, ""));
-    // Handle # prefix: "#90A-LAC"
-    cardNumberVariants.push(`#${cardNumber.toLowerCase()}`);
-  }
-
-  // Numbered parallel patterns
-  const numberedParallelRegex = /\/\s*(\d{1,4})\b/;
-  const colorParallels = ["red", "gold", "orange", "purple", "green", "pink", "black", "platinum", "superfractor", "sapphire", "magenta", "lava"];
-  const lotIndicators = ["lot", "bundle", "x2", "x3", "x4", "x5", "lot of", "card lot", "team lot", "collection"];
+  const colorParallels = ["red", "gold", "orange", "purple", "green", "pink", "black", "platinum",
+    "superfractor", "sapphire", "magenta", "lava", "blue refractor", "gold refractor",
+    "pink refractor", "orange refractor", "green refractor"];
+  const lotIndicators = ["lot ", " lot", "bundle", " x2 ", " x3 ", " x4 ", " x5 ", "lot of", "card lot", "team lot"];
   const gradedIndicators = ["psa ", "bgs ", "sgc ", "cgc ", " psa", " bgs", " sgc", " cgc", "psa10", "psa9", "bgs9"];
+  const numberedParallelRegex = /\/\s*(\d{1,4})\b/;
 
   return listings.map((listing) => {
-    const titleLower = listing.title.toLowerCase();
+    const titleLower = listing.title.toLowerCase()
+      .normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    let score = 0;
+    const breakdown: string[] = [];
 
-    // ── GATE 1: Card number MUST be in the title ──
+    // ── Card Number (35 pts) ──
     if (cardNumberVariants.length > 0) {
-      const hasCardNumber = cardNumberVariants.some((v) => titleLower.includes(v));
-      if (!hasCardNumber) {
-        return { ...listing, excluded: true, excludeReason: `wrong card number (need ${cardNumber})` };
-      }
-    }
-
-    // Exclude lots/bundles
-    if (lotIndicators.some((ind) => titleLower.includes(ind))) {
-      return { ...listing, excluded: true, excludeReason: "lot/bundle" };
-    }
-
-    // Exclude graded if our card is raw
-    if (!card.graded && gradedIndicators.some((g) => titleLower.includes(g))) {
-      return { ...listing, excluded: true, excludeReason: "graded (card is raw)" };
-    }
-
-    // Exclude raw if our card is graded
-    if (card.graded && !gradedIndicators.some((g) => titleLower.includes(g))) {
-      return { ...listing, excluded: true, excludeReason: "raw (card is graded)" };
-    }
-
-    // For base cards: exclude numbered parallels
-    if (isBaseCard) {
-      const numMatch = titleLower.match(numberedParallelRegex);
-      if (numMatch) {
-        const printRun = parseInt(numMatch[1]);
-        // Exclude short prints (/5, /10, /25, /50, /75, /99) but allow large runs (/2025, /500+)
-        if (printRun <= 199) {
-          return { ...listing, excluded: true, excludeReason: `numbered parallel /${printRun}` };
+      if (cardNumberVariants.some((v) => titleLower.includes(v))) {
+        score += 35;
+        breakdown.push("cardNum:35");
+      } else {
+        // Partial: check if any part of the card number appears
+        const numParts = cardNumber.split(/[-\s]+/).filter((p) => p.length >= 2);
+        const partialMatch = numParts.filter((p) => titleLower.includes(p)).length;
+        if (partialMatch > 0 && numParts.length > 0) {
+          const partialScore = Math.round(15 * (partialMatch / numParts.length));
+          score += partialScore;
+          breakdown.push(`cardNum:${partialScore}(partial)`);
+        } else {
+          breakdown.push("cardNum:0");
         }
       }
+    } else {
+      // No card number to match — give benefit of the doubt
+      score += 20;
+      breakdown.push("cardNum:20(unknown)");
+    }
 
-      // Exclude known color parallels for base cards
-      if (colorParallels.some((color) => {
-        // Must be a standalone word, not part of team name (e.g., "Red Sox")
+    // ── Player Name (20 pts) ──
+    if (titleLower.includes(playerLastName)) {
+      if (titleLower.includes(playerName)) {
+        score += 20;
+        breakdown.push("player:20");
+      } else {
+        score += 15; // Last name only
+        breakdown.push("player:15(lastName)");
+      }
+    } else {
+      breakdown.push("player:0");
+    }
+
+    // ── Year (10 pts) ──
+    if (year && titleLower.includes(year)) {
+      score += 10;
+      breakdown.push("year:10");
+    } else if (!year) {
+      score += 5;
+      breakdown.push("year:5(unknown)");
+    } else {
+      breakdown.push("year:0");
+    }
+
+    // ── Set/Product (10 pts) ──
+    if (setWords.length > 0) {
+      const setMatches = setWords.filter((w) => titleLower.includes(w)).length;
+      const setScore = Math.round(10 * (setMatches / setWords.length));
+      score += setScore;
+      breakdown.push(`set:${setScore}`);
+    } else {
+      score += 5;
+      breakdown.push("set:5(unknown)");
+    }
+
+    // ── Parallel (15 pts) ──
+    if (isBaseCard) {
+      // Base card: penalize if listing has numbered parallel or color variant
+      const numMatch = titleLower.match(numberedParallelRegex);
+      const hasShortPrint = numMatch && parseInt(numMatch[1]) <= 199;
+      const hasColorParallel = colorParallels.some((color) => {
         const regex = new RegExp(`\\b${color}\\b(?!\\s+(sox|wings|bulls|storm))`, "i");
         return regex.test(listing.title);
-      })) {
-        return { ...listing, excluded: true, excludeReason: "color parallel" };
-      }
-    }
+      });
 
-    // For specific parallels: only include if title mentions our parallel
-    if (!isBaseCard && cardParallel) {
+      if (hasShortPrint) {
+        score -= 10; // Penalty — this is likely a different, more valuable card
+        breakdown.push(`parallel:-10(/${numMatch![1]})`);
+      } else if (hasColorParallel) {
+        score -= 5;
+        breakdown.push("parallel:-5(color)");
+      } else {
+        score += 15;
+        breakdown.push("parallel:15(base)");
+      }
+    } else {
+      // Specific parallel: check if it's mentioned
       const parallelWords = cardParallel.split(/\s+/).filter((w) => w.length > 2);
-      const hasParallelMatch = parallelWords.some((word) => titleLower.includes(word.toLowerCase()));
-      if (!hasParallelMatch) {
-        // Don't exclude, but note it's a weak match
-        return { ...listing, matchScore: 50 };
+      const parallelMatches = parallelWords.filter((w) => titleLower.includes(w)).length;
+      if (parallelMatches > 0 && parallelWords.length > 0) {
+        const pScore = Math.round(15 * (parallelMatches / parallelWords.length));
+        score += pScore;
+        breakdown.push(`parallel:${pScore}`);
+      } else {
+        breakdown.push("parallel:0");
       }
     }
 
-    return { ...listing, matchScore: 100 };
+    // ── Condition type (5 pts) ──
+    const isGradedListing = gradedIndicators.some((g) => titleLower.includes(g));
+    if (card.graded && isGradedListing) {
+      score += 5;
+      breakdown.push("condition:5(graded)");
+    } else if (!card.graded && !isGradedListing) {
+      score += 5;
+      breakdown.push("condition:5(raw)");
+    } else {
+      score -= 5; // Mismatch
+      breakdown.push("condition:-5(mismatch)");
+    }
+
+    // ── Disqualifiers (5 pts) ──
+    const isLot = lotIndicators.some((ind) => titleLower.includes(ind));
+    if (isLot) {
+      score -= 20; // Hard penalty
+      breakdown.push("disqualify:-20(lot)");
+    } else {
+      score += 5;
+      breakdown.push("disqualify:5(clean)");
+    }
+
+    // Clamp score to 0-100
+    score = Math.max(0, Math.min(100, score));
+
+    const excluded = score < MATCH_THRESHOLD;
+
+    if (excluded) {
+      log("scoring", `EXCLUDED (${score}/100): "${listing.title.substring(0, 60)}..." [${breakdown.join(", ")}]`);
+    }
+
+    return {
+      ...listing,
+      matchScore: score,
+      excluded,
+      excludeReason: excluded ? `score ${score}/100 < threshold ${MATCH_THRESHOLD} [${breakdown.join(", ")}]` : undefined,
+    };
   });
 }
 
