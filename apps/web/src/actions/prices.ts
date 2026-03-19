@@ -62,10 +62,13 @@ export async function lookupCardPrice(card: {
 
   // ── Scrape eBay sold listings ──
   let ebaySuccess = false;
+  let firstEbayUrl: string | undefined;
   for (const query of queries) {
     console.log(`[prices] eBay search: "${query}"`);
     const ebayResult = await scrapeEbaySold(query);
-    sourceUrls.ebay = ebayResult.url;
+    if (!firstEbayUrl) firstEbayUrl = ebayResult.url;
+    // Use the URL of whichever query returned results, or the first query
+    if (!sourceUrls.ebay) sourceUrls.ebay = ebayResult.url;
 
     if (ebayResult.success && ebayResult.listings.length > 0) {
       console.log(`[prices] eBay found ${ebayResult.listings.length} listings`);
