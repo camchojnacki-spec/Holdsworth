@@ -22,15 +22,19 @@ export function CardGridItem({ card }: CardGridItemProps) {
       <div className="group relative rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
         {/* Card image */}
         <div className="aspect-[2.5/3.5] bg-muted relative overflow-hidden">
-          {card.thumbnailUrl ? (
+          {(card.thumbnailUrl || card.originalUrl) ? (
             <img
-              src={card.thumbnailUrl}
+              src={card.thumbnailUrl || card.originalUrl || ""}
               alt={`${card.playerName} card`}
               className="h-full w-full object-cover transition-transform group-hover:scale-105"
             />
           ) : (
-            <div className="flex h-full items-center justify-center text-muted-foreground">
-              <span className="text-3xl">🃏</span>
+            <div className="flex h-full items-center justify-center">
+              <svg width="32" height="44" viewBox="0 0 24 34" fill="none" stroke="currentColor" strokeWidth="1" className="text-muted-foreground/30">
+                <rect x="1" y="1" width="22" height="32" rx="2" />
+                <line x1="5" y1="6" x2="19" y2="6" />
+                <line x1="5" y1="10" x2="14" y2="10" />
+              </svg>
             </div>
           )}
           {/* Badges overlay */}

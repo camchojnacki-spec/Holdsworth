@@ -9,14 +9,17 @@ import { Input } from "@/components/ui/input";
 import { Loader2, Check, X, RotateCcw, Camera, Upload, SwitchCamera } from "lucide-react";
 import { scanCard, type ScanActionResult } from "@/actions/scanner";
 import { createCard } from "@/actions/cards";
-import type { CardScanResponse, CardBoundingBox } from "@/lib/ai/gemini";
+import type { CardScanResponse, CardCropRegion } from "@/lib/ai/gemini";
 
 type ScanState = "idle" | "camera" | "analyzing" | "results" | "saving" | "error";
 
+/** Max dimension for stored card images (keeps data URLs reasonable) */
+const MAX_CARD_WIDTH = 800;
+
 /**
- * Crop and straighten a card from an image using AI-detected bounding box.
+ * Crop a card from an image using AI-detected rectangle, then compress.
  */
-function cropCardFromImage(imageDataUrl: string, bounds: CardBoundingBox): Promise<string> {
+function cropCardFromImage(imageDataUrl: string, region: CardCropRegion): Promise<string> {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
@@ -24,48 +27,54 @@ function cropCardFromImage(imageDataUrl: string, bounds: CardBoundingBox): Promi
       const ctx = canvas.getContext("2d");
       if (!ctx) { resolve(imageDataUrl); return; }
 
-      const w = img.width;
-      const h = img.height;
+      const imgW = img.width;
+      const imgH = img.height;
 
-      // Get pixel coordinates of the bounding box
-      const tl = { x: bounds.topLeft.x * w, y: bounds.topLeft.y * h };
-      const tr = { x: bounds.topRight.x * w, y: bounds.topRight.y * h };
-      const bl = { x: bounds.bottomLeft.x * w, y: bounds.bottomLeft.y * h };
-      const br = { x: bounds.bottomRight.x * w, y: bounds.bottomRight.y * h };
+      // Source rectangle in pixels
+      const sx = Math.round(region.x * imgW);
+      const sy = Math.round(region.y * imgH);
+      const sw = Math.round(region.width * imgW);
+      const sh = Math.round(region.height * imgH);
 
-      // Calculate card dimensions
-      const cardW = Math.max(
-        Math.hypot(tr.x - tl.x, tr.y - tl.y),
-        Math.hypot(br.x - bl.x, br.y - bl.y)
-      );
-      const cardH = Math.max(
-        Math.hypot(bl.x - tl.x, bl.y - tl.y),
-        Math.hypot(br.x - tr.x, br.y - tr.y)
-      );
+      // Target size — maintain aspect, cap width
+      const scale = Math.min(1, MAX_CARD_WIDTH / sw);
+      const tw = Math.round(sw * scale);
+      const th = Math.round(sh * scale);
 
-      // Standard card aspect is 2.5:3.5
-      const targetW = Math.round(cardW);
-      const targetH = Math.round(cardW * 3.5 / 2.5);
+      canvas.width = tw;
+      canvas.height = th;
 
-      canvas.width = targetW;
-      canvas.height = targetH;
+      // Apply rotation if needed
+      const rotation = (region.rotation || 0) * Math.PI / 180;
+      if (Math.abs(rotation) > 0.01) {
+        ctx.translate(tw / 2, th / 2);
+        ctx.rotate(-rotation);
+        ctx.translate(-tw / 2, -th / 2);
+      }
 
-      // Use perspective transform via drawImage with rotation
-      const rotation = (bounds.rotation || 0) * Math.PI / 180;
-      const cx = (tl.x + tr.x + bl.x + br.x) / 4;
-      const cy = (tl.y + tr.y + bl.y + br.y) / 4;
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
+      resolve(canvas.toDataURL("image/jpeg", 0.88));
+    };
+    img.src = imageDataUrl;
+  });
+}
 
-      ctx.save();
-      ctx.translate(targetW / 2, targetH / 2);
-      ctx.rotate(-rotation);
-      ctx.drawImage(
-        img,
-        cx - cardW / 2, cy - cardH / 2, cardW, cardH,
-        -targetW / 2, -targetH / 2, targetW, targetH
-      );
-      ctx.restore();
+/**
+ * Compress a full image to a reasonable size for storage.
+ */
+function compressImage(imageDataUrl: string, maxWidth = 1000): Promise<string> {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement("canvas");
+      const ctx = canvas.getContext("2d");
+      if (!ctx) { resolve(imageDataUrl); return; }
 
-      resolve(canvas.toDataURL("image/jpeg", 0.95));
+      const scale = Math.min(1, maxWidth / img.width);
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
     };
     img.src = imageDataUrl;
   });
@@ -168,9 +177,11 @@ export default function ScanPage() {
         if (response.success && response.data) {
           setResult(response.data);
           setProcessingTime(response.processingTimeMs ?? null);
-          // Crop card from image if bounds detected
+          // Crop card from image if bounds detected, otherwise compress
           if (response.bounds && dataUrl) {
             cropCardFromImage(dataUrl, response.bounds).then(setCroppedPreview);
+          } else if (dataUrl) {
+            compressImage(dataUrl, MAX_CARD_WIDTH).then(setCroppedPreview);
           }
           setState("results");
         } else {
@@ -212,16 +223,16 @@ export default function ScanPage() {
     if (response.success && response.data) {
       setResult(response.data);
       setProcessingTime(response.processingTimeMs ?? null);
-      // Crop card from uploaded image if bounds detected
+      // Crop card from uploaded image if bounds detected, otherwise compress
+      const fullDataUrl = await new Promise<string>((res) => {
+        const r2 = new FileReader();
+        r2.onload = (ev2) => res(ev2.target?.result as string);
+        r2.readAsDataURL(file);
+      });
       if (response.bounds) {
-        const reader2 = new FileReader();
-        reader2.onload = (ev2) => {
-          const fullDataUrl = ev2.target?.result as string;
-          if (fullDataUrl && response.bounds) {
-            cropCardFromImage(fullDataUrl, response.bounds).then(setCroppedPreview);
-          }
-        };
-        reader2.readAsDataURL(file);
+        cropCardFromImage(fullDataUrl, response.bounds).then(setCroppedPreview);
+      } else {
+        compressImage(fullDataUrl, MAX_CARD_WIDTH).then(setCroppedPreview);
       }
       setState("results");
     } else {
