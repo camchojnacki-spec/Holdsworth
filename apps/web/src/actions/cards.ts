@@ -30,6 +30,7 @@ export interface CreateCardInput {
   notes?: string;
   aiRawResponse?: Record<string, unknown>;
   photoUrl?: string;
+  backPhotoUrl?: string;
   isAutograph?: boolean;
   isRelic?: boolean;
   subsetOrInsert?: string;
@@ -150,12 +151,21 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
     })
     .returning();
 
-  // If a photo URL was provided, create the photo record
+  // Save front photo
   if (input.photoUrl) {
     await db.insert(cardPhotos).values({
       cardId: card.id,
       originalUrl: input.photoUrl,
       photoType: "front",
+    });
+  }
+
+  // Save back photo
+  if (input.backPhotoUrl) {
+    await db.insert(cardPhotos).values({
+      cardId: card.id,
+      originalUrl: input.backPhotoUrl,
+      photoType: "back",
     });
   }
 
@@ -381,7 +391,19 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
     .limit(1);
 
   if (rows.length === 0) return null;
-  return rows[0] as CardWithDetails;
+
+  // Fetch back photo separately
+  const [backPhoto] = await db
+    .select({ originalUrl: cardPhotos.originalUrl })
+    .from(cardPhotos)
+    .where(and(eq(cardPhotos.cardId, id), eq(cardPhotos.photoType, "back")))
+    .limit(1);
+
+  const result = rows[0] as CardWithDetails;
+  if (backPhoto?.originalUrl) {
+    (result as CardWithDetails & { backPhotoUrl?: string }).backPhotoUrl = backPhoto.originalUrl;
+  }
+  return result;
 }
 
 // ── Dashboard Stats ──

@@ -289,6 +289,7 @@ export default function ScanPage() {
         grade: result.grade ?? undefined,
         aiRawResponse: result as unknown as Record<string, unknown>,
         photoUrl: croppedPreview ?? frontPreview ?? undefined,
+        backPhotoUrl: backPreview ?? undefined,
         isAutograph: result.is_autograph,
         subsetOrInsert: extResult._subsetOrInsert ?? result.subset_or_insert ?? undefined,
         referenceCardId: extResult._referenceCardId,

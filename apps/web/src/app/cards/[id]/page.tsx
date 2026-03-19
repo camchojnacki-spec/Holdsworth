@@ -41,13 +41,25 @@ export default async function CardDetailPage({
 
       <div className="grid gap-4 md:grid-cols-2">
         <Card>
-          <CardContent className="p-4">
+          <CardContent className="p-4 space-y-3">
             {card.originalUrl ? (
-              <img src={card.originalUrl} alt={card.playerName ?? "Card"} className="w-full rounded-lg" />
+              <img src={card.originalUrl} alt={card.playerName ?? "Card front"} className="w-full rounded-lg" />
             ) : (
               <div className="flex items-center justify-center h-64 rounded-lg bg-secondary/30">
                 <p className="text-sm text-muted-foreground">No photo</p>
               </div>
+            )}
+            {card.backPhotoUrl && (
+              <details className="group">
+                <summary style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground cursor-pointer hover:text-[var(--color-burg-light)] transition-colors">
+                  View Back
+                </summary>
+                <img
+                  src={card.backPhotoUrl}
+                  alt={`${card.playerName ?? "Card"} back`}
+                  className="w-full rounded-lg mt-2"
+                />
+              </details>
             )}
           </CardContent>
         </Card>

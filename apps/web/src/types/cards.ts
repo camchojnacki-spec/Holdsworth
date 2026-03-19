@@ -22,6 +22,7 @@ export interface CardWithDetails {
   notes: string | null;
   thumbnailUrl: string | null;
   originalUrl: string | null;
+  backPhotoUrl?: string | null;
   estimatedValueCad: string | null;
   estimatedValueUsd: string | null;
   priceTrend: string | null;
