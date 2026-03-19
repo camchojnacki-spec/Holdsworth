@@ -40,7 +40,8 @@ export function CardComps({ cardId }: CardCompsProps) {
     setJobStatus(statusData.status);
     setJobError(statusData.errorMessage);
     return { hasData: compsData.estimate !== null, isDone: statusData.status === "completed" || statusData.status === "failed" };
-  }, [cardId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cardId, pollTrigger]);
 
   useEffect(() => {
     let pollInterval: ReturnType<typeof setInterval> | null = null;
@@ -68,7 +69,7 @@ export function CardComps({ cardId }: CardCompsProps) {
       if (pollInterval) clearInterval(pollInterval);
       clearTimeout(timeout);
     };
-  }, [fetchData, pollTrigger]);
+  }, [fetchData]);
 
   const hasData = comps?.estimate !== null;
   const isRealData = comps?.estimate && comps.estimate.confidence !== "low";
