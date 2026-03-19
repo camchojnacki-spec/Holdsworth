@@ -184,17 +184,36 @@ function preFilterListings(listings: SoldListing[], card: CardPricePayload): Sol
   const cardParallel = (card.parallelVariant || "").toLowerCase();
   const isBaseCard = !cardParallel || cardParallel === "base" || cardParallel === "base card";
 
-  // Numbered parallel patterns: /5, /10, /25, /50, /75, /99, /150, /199, /250, etc.
+  // ── PRIMARY GATE: Card number match ──
+  // If we know the card number, the listing MUST contain it.
+  // This is the single most effective filter — different card numbers = different cards.
+  const cardNumber = card.cardNumber?.trim();
+  const cardNumberVariants: string[] = [];
+  if (cardNumber) {
+    cardNumberVariants.push(cardNumber.toLowerCase());
+    // Also match with spaces/hyphens swapped: "90A-LAC" → "90a lac", "90a-lac"
+    cardNumberVariants.push(cardNumber.toLowerCase().replace(/-/g, " "));
+    cardNumberVariants.push(cardNumber.toLowerCase().replace(/-/g, ""));
+    // Handle # prefix: "#90A-LAC"
+    cardNumberVariants.push(`#${cardNumber.toLowerCase()}`);
+  }
+
+  // Numbered parallel patterns
   const numberedParallelRegex = /\/\s*(\d{1,4})\b/;
-  // Color parallels that indicate non-base
-  const colorParallels = ["red", "gold", "orange", "purple", "green", "pink", "black", "platinum", "superfractor", "sapphire"];
-  // Lot/bundle indicators
+  const colorParallels = ["red", "gold", "orange", "purple", "green", "pink", "black", "platinum", "superfractor", "sapphire", "magenta", "lava"];
   const lotIndicators = ["lot", "bundle", "x2", "x3", "x4", "x5", "lot of", "card lot", "team lot", "collection"];
-  // Graded indicators
   const gradedIndicators = ["psa ", "bgs ", "sgc ", "cgc ", " psa", " bgs", " sgc", " cgc", "psa10", "psa9", "bgs9"];
 
   return listings.map((listing) => {
     const titleLower = listing.title.toLowerCase();
+
+    // ── GATE 1: Card number MUST be in the title ──
+    if (cardNumberVariants.length > 0) {
+      const hasCardNumber = cardNumberVariants.some((v) => titleLower.includes(v));
+      if (!hasCardNumber) {
+        return { ...listing, excluded: true, excludeReason: `wrong card number (need ${cardNumber})` };
+      }
+    }
 
     // Exclude lots/bundles
     if (lotIndicators.some((ind) => titleLower.includes(ind))) {
