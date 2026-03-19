@@ -1,6 +1,7 @@
 "use server";
 
 import * as cheerio from "cheerio";
+import { chromium } from "playwright-core";
 
 export interface EbaySoldListing {
   title: string;
@@ -66,21 +67,32 @@ export async function scrapeEbaySold(query: string): Promise<{
   const url = buildEbayUrl(query);
 
   try {
-    const response = await fetch(url, {
-      headers: {
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-      },
-      next: { revalidate: 3600 }, // Cache for 1 hour
+    // Use Playwright to render eBay pages — plain fetch gets blocked by bot detection
+    let browser;
+    try {
+      browser = await chromium.launch({ headless: true });
+    } catch {
+      // If chromium binary not found, fall back to playwright's bundled browser
+      const pw = await import("playwright");
+      browser = await pw.chromium.launch({ headless: true });
+    }
+    const context = await browser.newContext({
+      userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+      locale: "en-US",
     });
+    const page = await context.newPage();
 
-    if (!response.ok) {
-      return { success: false, query, url, listings: [], error: `eBay returned ${response.status}` };
+    try {
+      await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15000 });
+      // Wait for search results to render
+      await page.waitForSelector(".s-item", { timeout: 8000 }).catch(() => {});
+    } catch {
+      // Page might have loaded partially — try to parse what we got
     }
 
-    const html = await response.text();
+    const html = await page.content();
+    await browser.close();
+
     const $ = cheerio.load(html);
     const listings: EbaySoldListing[] = [];
 
