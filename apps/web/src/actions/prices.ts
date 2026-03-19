@@ -3,6 +3,7 @@
 import { GoogleGenAI } from "@google/genai";
 import { scrapeEbaySold, buildEbayQueries } from "./scrape-ebay";
 import { scrape130Point } from "./scrape-130point";
+import { scrapeEbayApi } from "./scrape-ebay-api";
 
 export interface SoldListing {
   title: string;
@@ -109,6 +110,24 @@ export async function lookupCardPrice(card: {
       });
     }
     dataSources.push("130point.com");
+  }
+
+  // ── eBay Browse API (active listings for market context) ──
+  console.log(`[prices] eBay API search: "${primaryQuery}"`);
+  const ebayApiResult = await scrapeEbayApi(primaryQuery);
+  if (ebayApiResult.success && ebayApiResult.listings.length > 0) {
+    console.log(`[prices] eBay API found ${ebayApiResult.listings.length} active listings`);
+    for (const listing of ebayApiResult.listings.slice(0, 10)) {
+      allListings.push({
+        title: listing.title,
+        price: listing.price,
+        date: "active",
+        source: "ebay-active",
+        url: listing.url,
+      });
+    }
+    dataSources.push("eBay Active Listings (API)");
+    if (!sourceUrls.ebay) sourceUrls.ebay = ebayApiResult.url;
   }
 
   // ── Calculate stats from real data ──
