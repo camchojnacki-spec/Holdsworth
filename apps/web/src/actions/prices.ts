@@ -1,21 +1,21 @@
 "use server";
 
-import * as cheerio from "cheerio";
+import { chromium } from "playwright";
 
-export interface EbaySoldListing {
+export interface SoldListing {
   title: string;
   price: number;
   currency: string;
   dateSold: string;
   url: string;
   shippingPrice: number | null;
-  condition: string | null;
+  source: string;
 }
 
 export interface PriceLookupResult {
   success: boolean;
   query: string;
-  listings: EbaySoldListing[];
+  listings: SoldListing[];
   stats: {
     count: number;
     avgPrice: number;
@@ -29,7 +29,6 @@ export interface PriceLookupResult {
 
 /**
  * Build an eBay search query from card details.
- * Prioritizes specificity: player + year + set + card number + parallel
  */
 function buildSearchQuery(card: {
   playerName: string;
@@ -60,8 +59,79 @@ function buildSearchQuery(card: {
 }
 
 /**
- * Scrape eBay sold/completed listings for a card.
- * Uses eBay's public search with LH_Sold=1&LH_Complete=1 filters.
+ * Scrape eBay sold listings using Playwright headless browser.
+ */
+async function scrapeEbaySold(query: string): Promise<SoldListing[]> {
+  const searchUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodeURIComponent(query)}&_sacat=261328&LH_Sold=1&LH_Complete=1&_sop=13&rt=nc&_ipg=60`;
+
+  let browser;
+  try {
+    browser = await chromium.launch({ headless: true });
+    const page = await browser.newPage();
+    await page.setViewportSize({ width: 1280, height: 800 });
+
+    await page.goto(searchUrl, { waitUntil: "domcontentloaded", timeout: 15000 });
+    // Wait for results to load
+    await page.waitForSelector(".s-item", { timeout: 8000 }).catch(() => {});
+
+    const listings = await page.evaluate(() => {
+      const items: {
+        title: string;
+        price: number;
+        currency: string;
+        dateSold: string;
+        url: string;
+        shippingPrice: number | null;
+      }[] = [];
+
+      document.querySelectorAll(".s-item").forEach((el) => {
+        const titleEl = el.querySelector(".s-item__title");
+        const title = titleEl?.textContent?.trim() || "";
+        if (!title || title === "Shop on eBay") return;
+
+        // Get sold price (green text)
+        const priceEl = el.querySelector(".s-item__price .POSITIVE") || el.querySelector(".s-item__price");
+        const priceText = priceEl?.textContent?.trim() || "";
+        const priceMatch = priceText.match(/[\d,]+\.?\d*/);
+        if (!priceMatch) return;
+        const price = parseFloat(priceMatch[0].replace(/,/g, ""));
+        if (isNaN(price) || price <= 0) return;
+
+        const currency = priceText.includes("C $") || priceText.includes("CA$") ? "CAD" : "USD";
+
+        // Date sold
+        const dateEl = el.querySelector(".s-item__title--tag .POSITIVE, .s-item__ended-date");
+        const dateSold = dateEl?.textContent?.trim() || "";
+
+        // URL
+        const linkEl = el.querySelector<HTMLAnchorElement>(".s-item__link");
+        const url = linkEl?.href?.split("?")[0] || "";
+
+        // Shipping
+        const shipEl = el.querySelector(".s-item__shipping, .s-item__freeXDays");
+        const shipText = shipEl?.textContent?.trim() || "";
+        let shippingPrice: number | null = null;
+        if (shipText.toLowerCase().includes("free")) {
+          shippingPrice = 0;
+        } else {
+          const shipMatch = shipText.match(/[\d,]+\.?\d*/);
+          if (shipMatch) shippingPrice = parseFloat(shipMatch[0].replace(/,/g, ""));
+        }
+
+        items.push({ title, price, currency, dateSold, url, shippingPrice });
+      });
+
+      return items;
+    });
+
+    return listings.map((l) => ({ ...l, source: "ebay" }));
+  } finally {
+    if (browser) await browser.close();
+  }
+}
+
+/**
+ * Look up card prices from eBay sold listings.
  */
 export async function lookupCardPrice(card: {
   playerName: string;
@@ -77,72 +147,7 @@ export async function lookupCardPrice(card: {
   const query = buildSearchQuery(card);
 
   try {
-    // Search eBay sold listings — category 261328 = Sports Trading Cards
-    const searchUrl = new URL("https://www.ebay.com/sch/i.html");
-    searchUrl.searchParams.set("_nkw", query);
-    searchUrl.searchParams.set("_sacat", "261328");
-    searchUrl.searchParams.set("LH_Sold", "1");
-    searchUrl.searchParams.set("LH_Complete", "1");
-    searchUrl.searchParams.set("_sop", "13"); // Sort by end date: recent first
-    searchUrl.searchParams.set("rt", "nc");
-    searchUrl.searchParams.set("_ipg", "60"); // 60 results per page
-
-    const response = await fetch(searchUrl.toString(), {
-      headers: {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-      },
-    });
-
-    if (!response.ok) {
-      return { success: false, query, listings: [], stats: null, error: `eBay returned ${response.status}` };
-    }
-
-    const html = await response.text();
-    const $ = cheerio.load(html);
-    const listings: EbaySoldListing[] = [];
-
-    // Parse each sold listing item
-    $(".s-item").each((_, el) => {
-      const $item = $(el);
-      const title = $item.find(".s-item__title").text().trim();
-      if (!title || title === "Shop on eBay") return;
-
-      // Price — eBay shows sold price with strikethrough for the original and green for sold
-      const priceText = $item.find(".s-item__price .POSITIVE").text().trim()
-        || $item.find(".s-item__price").first().text().trim();
-
-      // Extract numeric price
-      const priceMatch = priceText.match(/[\d,]+\.?\d*/);
-      if (!priceMatch) return;
-      const price = parseFloat(priceMatch[0].replace(/,/g, ""));
-      if (isNaN(price) || price <= 0) return;
-
-      // Currency detection
-      const currency = priceText.includes("C $") || priceText.includes("CA$") ? "CAD" : "USD";
-
-      // Date sold
-      const dateSold = $item.find(".s-item__ended-date, .s-item__endedDate, .POSITIVE").last().text().trim();
-
-      // Link
-      const url = $item.find(".s-item__link").attr("href") || "";
-
-      // Shipping
-      const shippingText = $item.find(".s-item__shipping, .s-item__freeXDays").text().trim();
-      let shippingPrice: number | null = null;
-      if (shippingText.toLowerCase().includes("free")) {
-        shippingPrice = 0;
-      } else {
-        const shipMatch = shippingText.match(/[\d,]+\.?\d*/);
-        if (shipMatch) shippingPrice = parseFloat(shipMatch[0].replace(/,/g, ""));
-      }
-
-      // Condition
-      const condition = $item.find(".SECONDARY_INFO").text().trim() || null;
-
-      listings.push({ title, price, currency, dateSold, url: url.split("?")[0], shippingPrice, condition });
-    });
+    const listings = await scrapeEbaySold(query);
 
     if (listings.length === 0) {
       return { success: true, query, listings: [], stats: null };
@@ -156,7 +161,7 @@ export async function lookupCardPrice(card: {
       ? (prices[count / 2 - 1] + prices[count / 2]) / 2
       : prices[Math.floor(count / 2)];
 
-    // Rough USD→CAD conversion (will use live rates later)
+    // Rough USD→CAD (will use live rates later)
     const usdToCad = 1.38;
     const avgPriceCad = avgPrice * usdToCad;
 

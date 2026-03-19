@@ -52,19 +52,19 @@ export default function ScanPage() {
 
       streamRef.current = stream;
       setState("camera");
-
-      // Wait for ref to be available after state change
-      requestAnimationFrame(() => {
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        }
-      });
     } catch {
       setError("Camera access denied. Grant permission or use Upload instead.");
       setState("error");
     }
   }, [facingMode]);
+
+  // Attach stream to video element whenever it mounts or stream changes
+  useEffect(() => {
+    if (state === "camera" && videoRef.current && streamRef.current) {
+      videoRef.current.srcObject = streamRef.current;
+      videoRef.current.play().catch(() => {});
+    }
+  }, [state]);
 
   const stopCamera = useCallback(() => {
     if (streamRef.current) {
@@ -177,6 +177,7 @@ export default function ScanPage() {
         gradingCompany: result.grading_company ?? undefined,
         grade: result.grade ?? undefined,
         aiRawResponse: result as unknown as Record<string, unknown>,
+        photoUrl: preview ?? undefined,
       });
 
       router.push(`/cards/${id}`);
@@ -253,16 +254,28 @@ export default function ScanPage() {
                 className="w-full aspect-[3/4] sm:aspect-video object-cover"
               />
 
-              {/* Viewfinder overlay */}
+              {/* Viewfinder overlay with darkened surround */}
               <div className="absolute inset-0 pointer-events-none">
-                {/* Card frame guide — 2.5 x 3.5 aspect ratio */}
-                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[60%] aspect-[2.5/3.5]">
-                  <div className="absolute top-0 left-0 w-6 h-6 border-t-2 border-l-2 border-[var(--color-burg)]" />
-                  <div className="absolute top-0 right-0 w-6 h-6 border-t-2 border-r-2 border-[var(--color-burg)]" />
-                  <div className="absolute bottom-0 left-0 w-6 h-6 border-b-2 border-l-2 border-[var(--color-burg)]" />
-                  <div className="absolute bottom-0 right-0 w-6 h-6 border-b-2 border-r-2 border-[var(--color-burg)]" />
+                {/* Dark overlay with card-shaped cutout using box-shadow */}
+                <div
+                  className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[55%] aspect-[2.5/3.5] rounded-lg"
+                  style={{ boxShadow: "0 0 0 9999px rgba(0,0,0,0.5)" }}
+                />
+                {/* Card border */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[55%] aspect-[2.5/3.5] rounded-lg border-2 border-white/70">
+                  {/* Corner brackets */}
+                  <div className="absolute -top-[1px] -left-[1px] w-8 h-8 border-t-[3px] border-l-[3px] border-[var(--color-burg)] rounded-tl-lg" />
+                  <div className="absolute -top-[1px] -right-[1px] w-8 h-8 border-t-[3px] border-r-[3px] border-[var(--color-burg)] rounded-tr-lg" />
+                  <div className="absolute -bottom-[1px] -left-[1px] w-8 h-8 border-b-[3px] border-l-[3px] border-[var(--color-burg)] rounded-bl-lg" />
+                  <div className="absolute -bottom-[1px] -right-[1px] w-8 h-8 border-b-[3px] border-r-[3px] border-[var(--color-burg)] rounded-br-lg" />
                   {/* Scanning line */}
-                  <div className="absolute left-2 right-2 h-[2px] bg-[var(--color-burg)] opacity-50" style={{ animation: "scanH 2.5s cubic-bezier(0.25,0.1,0.25,1) infinite" }} />
+                  <div className="absolute left-3 right-3 h-[2px] bg-[var(--color-burg)]" style={{ animation: "scanH 2.5s cubic-bezier(0.25,0.1,0.25,1) infinite" }} />
+                </div>
+                {/* FRONT label */}
+                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[55%] aspect-[2.5/3.5]">
+                  <span style={{ fontFamily: "var(--font-mono)" }} className="absolute -top-6 left-1/2 -translate-x-1/2 text-[11px] tracking-[0.15em] uppercase text-white/80">
+                    Front
+                  </span>
                 </div>
               </div>
 
