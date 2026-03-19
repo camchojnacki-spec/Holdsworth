@@ -18,6 +18,7 @@ export function CardComps({ cardId }: CardCompsProps) {
   const [jobError, setJobError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [rescouting, setRescouting] = useState(false);
+  const [pollTrigger, setPollTrigger] = useState(0);
 
   const handleRescout = async () => {
     setRescouting(true);
@@ -26,7 +27,8 @@ export function CardComps({ cardId }: CardCompsProps) {
     setLoading(true);
     await rescoutCard(cardId);
     setRescouting(false);
-    // Polling will pick up the new job status
+    // Bump trigger to restart polling useEffect
+    setPollTrigger((t) => t + 1);
   };
 
   const fetchData = useCallback(async () => {
@@ -66,7 +68,7 @@ export function CardComps({ cardId }: CardCompsProps) {
       if (pollInterval) clearInterval(pollInterval);
       clearTimeout(timeout);
     };
-  }, [fetchData]);
+  }, [fetchData, pollTrigger]);
 
   const hasData = comps?.estimate !== null;
   const isRealData = comps?.estimate && comps.estimate.confidence !== "low";
