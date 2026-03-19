@@ -32,7 +32,7 @@ async function getEbayToken(): Promise<string | null> {
     });
 
     if (!res.ok) return null;
-    const data = await res.json();
+    const data = await res.json() as { access_token: string; expires_in: number };
 
     cachedToken = {
       token: data.access_token,
@@ -83,7 +83,13 @@ export async function scrapeEbayApi(query: string): Promise<{
       return { success: false, query, url: searchUrl, listings: [], total: 0, error: `eBay API ${res.status}` };
     }
 
-    const data = await res.json();
+    const data = await res.json() as {
+      itemSummaries?: Array<{
+        title?: string; price?: { value?: string; currency?: string };
+        itemWebUrl?: string; image?: { imageUrl?: string }; condition?: string;
+      }>;
+      total?: number;
+    };
     const listings: EbayApiListing[] = [];
 
     for (const item of data.itemSummaries || []) {

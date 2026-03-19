@@ -35,6 +35,8 @@ export const priceHistory = pgTable(
     currencyRate: numeric("currency_rate", { precision: 10, scale: 6 }),
     saleDate: timestamp("sale_date"),
     listingUrl: varchar("listing_url", { length: 1000 }),
+    listingTitle: varchar("listing_title", { length: 500 }),
+    matchScore: integer("match_score"),
     condition: varchar("condition", { length: 50 }),
     graded: boolean("graded").default(false),
     grade: varchar("grade", { length: 20 }),

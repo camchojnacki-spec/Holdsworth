@@ -182,9 +182,10 @@ export async function detectCardBounds(
       return null;
     }
 
-    // Add 3% padding around detected edges so card borders aren't clipped
-    const padX = (xmax - xmin) * 0.03;
-    const padY = (ymax - ymin) * 0.03;
+    // Add padding around detected edges so card borders aren't clipped
+    // Use more vertical padding (5%) since Gemini tends to clip the bottom
+    const padX = (xmax - xmin) * 0.04;
+    const padY = (ymax - ymin) * 0.05;
     const px1 = Math.max(0, xmin - padX);
     const py1 = Math.max(0, ymin - padY);
     const px2 = Math.min(1, xmax + padX);

@@ -464,6 +464,8 @@ export interface CachedComps {
     priceCad: string;
     saleDate: Date | null;
     listingUrl: string | null;
+    listingTitle: string | null;
+    matchScore: number | null;
     sourceName: string;
   }>;
 }
@@ -483,6 +485,8 @@ export async function getCardComps(cardId: string): Promise<CachedComps> {
       priceCad: priceHistory.priceCad,
       saleDate: priceHistory.saleDate,
       listingUrl: priceHistory.listingUrl,
+      listingTitle: priceHistory.listingTitle,
+      matchScore: priceHistory.matchScore,
       sourceName: priceSources.name,
     })
     .from(priceHistory)
@@ -505,6 +509,8 @@ export async function getCardComps(cardId: string): Promise<CachedComps> {
       priceCad: h.priceCad ?? "0",
       saleDate: h.saleDate,
       listingUrl: h.listingUrl,
+      listingTitle: h.listingTitle ?? null,
+      matchScore: h.matchScore ?? null,
       sourceName: h.sourceName ?? "Unknown",
     })),
   };

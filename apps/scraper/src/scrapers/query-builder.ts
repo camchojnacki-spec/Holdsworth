@@ -25,10 +25,16 @@ export function buildSearchQueries(card: {
   const autoTag = card.isAutograph ? "autograph" : "";
   const insertName = card.subsetOrInsert || "";
 
-  // Most specific: card number + player + auto
+  // For specific parallels, include variant name in queries
+  const parallelTag = card.parallelVariant &&
+    !["base", "base card"].includes(card.parallelVariant.toLowerCase())
+    ? card.parallelVariant
+    : "";
+
+  // Most specific: card number + player + auto + parallel
   if (card.cardNumber) {
     queries.push(
-      [card.year, card.manufacturer || "Topps", card.cardNumber, playerName, autoTag]
+      [card.year, card.manufacturer || "Topps", card.cardNumber, playerName, autoTag, parallelTag]
         .filter(Boolean).join(" ")
     );
   }

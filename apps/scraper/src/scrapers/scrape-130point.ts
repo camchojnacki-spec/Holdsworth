@@ -7,6 +7,7 @@ export interface OneThirtyPointListing {
   date: string;
   url: string;
   imageUrl: string | null;
+  saleType: string | null; // "best_offer" if detected, null otherwise
 }
 
 /**
@@ -70,7 +71,18 @@ export async function scrape130Point(query: string): Promise<{
       }
 
       const imageUrl = $row.find("#imgCol img").first().attr("src") || null;
-      listings.push({ title, price, date, url: itemUrl, imageUrl });
+
+      // Detect best offer accepted — check the auctionLabel element and props-data
+      const auctionLabel = $row.find("#auctionLabel").text().trim().toLowerCase();
+      const propsData = $row.find(".props-data").text();
+      const bestOfferPriceMatch = propsData.match(/Best Offer Price:\s*([\d.]+)/);
+      const bestOfferPrice = bestOfferPriceMatch ? parseFloat(bestOfferPriceMatch[1]) : 0;
+      // It's a best offer if: the label says so, OR the best offer price > 0 and differs from sale price
+      const isBestOffer = auctionLabel.includes("best offer") ||
+        (bestOfferPrice > 0 && Math.abs(bestOfferPrice - price) > 0.01);
+      const saleType = isBestOffer ? "best_offer" : null;
+
+      listings.push({ title, price, date, url: itemUrl, imageUrl, saleType });
     });
 
     log("130point", `Parsed ${listings.length} listings`, { query });

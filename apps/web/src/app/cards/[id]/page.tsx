@@ -7,6 +7,7 @@ import { ArrowLeft } from "lucide-react";
 import { getCardById } from "@/actions/cards";
 import { DeleteCardButton } from "@/components/cards/delete-card-button";
 import { CardComps } from "@/components/cards/card-comps";
+import { CardGrade } from "@/components/cards/card-grade";
 
 export default async function CardDetailPage({
   params,
@@ -90,21 +91,14 @@ export default async function CardDetailPage({
             </CardContent>
           </Card>
 
-          <Card>
-            <CardHeader className="pb-3">
-              <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">Condition</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <Field label="Estimate" value={card.condition} />
-              {card.conditionNotes && <Field label="Notes" value={card.conditionNotes} />}
-              {card.graded && (
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Grading Company" value={card.gradingCompany} />
-                  <Field label="Grade" value={card.grade} />
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <CardGrade
+            cardId={card.id}
+            condition={card.condition}
+            conditionNotes={card.conditionNotes}
+            graded={card.graded}
+            gradingCompany={card.gradingCompany}
+            grade={card.grade}
+          />
         </div>
       </div>
 
