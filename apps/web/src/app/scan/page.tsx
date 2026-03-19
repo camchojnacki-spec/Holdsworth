@@ -23,37 +23,37 @@ function cropCardFromImage(imageDataUrl: string, region: CardCropRegion): Promis
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
+      const imgW = img.width;
+      const imgH = img.height;
+      const rotation = (region.rotation || 0) * Math.PI / 180;
+
+      // Center of the card in the original image
+      const cx = (region.x + region.width / 2) * imgW;
+      const cy = (region.y + region.height / 2) * imgH;
+      const cardW = region.width * imgW;
+      const cardH = region.height * imgH;
+
+      // Target size — maintain aspect, cap width
+      const scale = Math.min(1, MAX_CARD_WIDTH / cardW);
+      const tw = Math.round(cardW * scale);
+      const th = Math.round(cardH * scale);
+
       const canvas = document.createElement("canvas");
+      canvas.width = tw;
+      canvas.height = th;
       const ctx = canvas.getContext("2d");
       if (!ctx) { resolve(imageDataUrl); return; }
 
-      const imgW = img.width;
-      const imgH = img.height;
+      // Move canvas origin to center, counter-rotate around card center, then draw
+      ctx.save();
+      ctx.translate(tw / 2, th / 2);
+      ctx.rotate(-rotation);
+      ctx.scale(scale, scale);
+      // Draw the full image positioned so the card center aligns with canvas center
+      ctx.drawImage(img, -(cx), -(cy));
+      ctx.restore();
 
-      // Source rectangle in pixels
-      const sx = Math.round(region.x * imgW);
-      const sy = Math.round(region.y * imgH);
-      const sw = Math.round(region.width * imgW);
-      const sh = Math.round(region.height * imgH);
-
-      // Target size — maintain aspect, cap width
-      const scale = Math.min(1, MAX_CARD_WIDTH / sw);
-      const tw = Math.round(sw * scale);
-      const th = Math.round(sh * scale);
-
-      canvas.width = tw;
-      canvas.height = th;
-
-      // Apply rotation if needed
-      const rotation = (region.rotation || 0) * Math.PI / 180;
-      if (Math.abs(rotation) > 0.01) {
-        ctx.translate(tw / 2, th / 2);
-        ctx.rotate(-rotation);
-        ctx.translate(-tw / 2, -th / 2);
-      }
-
-      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, tw, th);
-      resolve(canvas.toDataURL("image/jpeg", 0.88));
+      resolve(canvas.toDataURL("image/jpeg", 0.90));
     };
     img.src = imageDataUrl;
   });

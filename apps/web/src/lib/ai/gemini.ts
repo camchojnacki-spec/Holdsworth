@@ -110,32 +110,33 @@ export async function detectCardBounds(
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-flash",
+    model: "gemini-2.5-pro",
     contents: [
       {
         role: "user",
         parts: [
           {
-            text: `Locate the exact edges of the trading card in this image. The card is a standard rectangular trading card being held or photographed.
+            text: `You are a precise image analysis tool. Find the trading card in this image and return its exact position.
 
-Return ONLY valid JSON with the TIGHT bounding rectangle that touches the card edges precisely. Do NOT include fingers, hands, background, or any area outside the card border. The rectangle should align with the printed card border itself.
+The card has a clear rectangular border. I need the coordinates of the card's PRINTED BORDER EDGES — not the edges of fingers, shadows, or background.
 
+Return ONLY this JSON:
 {
   "x": 0.0,
   "y": 0.0,
   "width": 0.0,
   "height": 0.0,
-  "rotation": 0
+  "rotation": 0.0
 }
 
-All values are fractions of image dimensions (0.0 to 1.0):
-- x = left edge of the card border
-- y = top edge of the card border
-- width = card width (right edge minus left edge)
-- height = card height (bottom edge minus top edge)
-- rotation = degrees the card is tilted clockwise (0 if upright)
+Coordinate system (all values are fractions 0.0-1.0 of image dimensions):
+- x = fraction from left edge of image to LEFT edge of card border
+- y = fraction from top edge of image to TOP edge of card border
+- width = card border width as fraction of image width
+- height = card border height as fraction of image height
+- rotation = degrees the card is rotated clockwise from vertical (can be negative for counter-clockwise, typically -15 to +15 degrees)
 
-Be precise. The crop should show ONLY the card with no surrounding background visible.`,
+CRITICAL: Be extremely precise. Measure to the card's printed border, not to fingers or shadows. If the card is tilted even slightly (1-2 degrees), report the rotation accurately. The resulting crop must show the complete card face with no fingers, desk, or background visible.`,
           },
           {
             inlineData: {
