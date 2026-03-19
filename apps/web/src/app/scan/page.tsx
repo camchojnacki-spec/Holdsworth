@@ -73,6 +73,7 @@ export default function ScanPage() {
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -86,17 +87,35 @@ export default function ScanPage() {
   }, []);
 
   const startCamera = useCallback(async (target: "front" | "back") => {
+    setCaptureTarget(target);
+
+    // On mobile or when getUserMedia isn't available over HTTP,
+    // use the native camera input which opens the phone's camera app
+    // and returns a full-resolution photo
+    const isMobile = /iPhone|iPad|iPod|Android/i.test(navigator.userAgent);
+    const isSecure = location.protocol === "https:" || location.hostname === "localhost";
+
+    if (isMobile || !isSecure) {
+      // Use native <input capture="environment"> — opens phone camera at full resolution
+      if (cameraInputRef.current) {
+        cameraInputRef.current.click();
+      }
+      return;
+    }
+
+    // Desktop with HTTPS — use WebRTC viewfinder
     try {
       if (streamRef.current) streamRef.current.getTracks().forEach((t) => t.stop());
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { facingMode, width: { ideal: 1920 }, height: { ideal: 1080 } },
       });
       streamRef.current = stream;
-      setCaptureTarget(target);
       setState(target === "front" ? "camera-front" : "camera-back");
     } catch {
-      setError("Camera access denied. Grant permission or use Upload instead.");
-      setState("error");
+      // WebRTC failed — fall back to native camera input
+      if (cameraInputRef.current) {
+        cameraInputRef.current.click();
+      }
     }
   }, [facingMode]);
 
@@ -245,6 +264,7 @@ export default function ScanPage() {
     setProcessingTime(null);
     setCaptureTarget("front");
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   };
 
   const isCamera = state === "camera-front" || state === "camera-back";
@@ -258,6 +278,7 @@ export default function ScanPage() {
       </div>
 
       <input ref={fileInputRef} type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleFileUpload} />
+      <input ref={cameraInputRef} type="file" className="hidden" accept="image/*" capture="environment" onChange={handleFileUpload} />
       <canvas ref={canvasRef} className="hidden" />
 
       {/* ── IDLE ── */}
