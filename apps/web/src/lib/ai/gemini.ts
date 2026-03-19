@@ -111,29 +111,13 @@ export async function detectCardBounds(
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
+    systemInstruction: "Return bounding boxes as a JSON array with labels. Never return masks or code fencing.",
     contents: [
       {
         role: "user",
         parts: [
           {
-            text: `Detect the rectangular trading card in this photograph. The card is being held by a person's hand.
-
-Return ONLY this exact JSON format (no other text, no markdown):
-[{"box_2d": [ymin, xmin, ymax, xmax], "label": "trading_card"}]
-
-COORDINATE RULES:
-- Coordinates are integers from 0 to 1000
-- 0 = top/left edge of the image, 1000 = bottom/right edge
-- ymin = top edge of card, xmin = left edge of card
-- ymax = bottom edge of card, xmax = right edge of card
-
-CRITICAL DETECTION RULES:
-- Find the OUTER PRINTED BORDER of the card — the very edge where card stock meets background
-- The card is rectangular, approximately 2.5 x 3.5 inch ratio
-- EXCLUDE all fingers, thumbs, hands — crop AT the card edge, not at the fingers
-- Include the full card — do NOT cut off any text, logos, or borders at the top/bottom/sides
-- If the card has a colored border (blue, red, gold), include the ENTIRE border
-- Better to include 1-2% extra background than to cut off any part of the card`,
+            text: `Detect the trading card in this image. Output a JSON list where each entry contains the 2D bounding box in key "box_2d" and text label in key "label".`,
           },
           {
             inlineData: {
@@ -145,8 +129,10 @@ CRITICAL DETECTION RULES:
       },
     ],
     config: {
-      temperature: 0.1,
-      maxOutputTokens: 1024,
+      temperature: 0.5,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
@@ -197,9 +183,9 @@ CRITICAL DETECTION RULES:
       return null;
     }
 
-    // Add 8% padding around detected edges so card borders aren't clipped
-    const padX = (xmax - xmin) * 0.08;
-    const padY = (ymax - ymin) * 0.08;
+    // Add 3% padding around detected edges so card borders aren't clipped
+    const padX = (xmax - xmin) * 0.03;
+    const padY = (ymax - ymin) * 0.03;
     const px1 = Math.max(0, xmin - padX);
     const py1 = Math.max(0, ymin - padY);
     const px2 = Math.min(1, xmax + padX);
