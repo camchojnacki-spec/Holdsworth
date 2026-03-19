@@ -26,6 +26,14 @@ export function CardComps({ card }: CardCompsProps) {
     let cancelled = false;
 
     async function fetchComps() {
+      // 30 second timeout
+      const timeout = setTimeout(() => {
+        if (!cancelled) {
+          setComps({ success: false, query: "", listings: [], stats: null, estimatedValue: null, marketNotes: null, error: "Market lookup timed out. Try refreshing." });
+          setLoading(false);
+        }
+      }, 30000);
+
       try {
         const result = await lookupCardPrice({
           playerName: card.playerName,
@@ -38,8 +46,10 @@ export function CardComps({ card }: CardCompsProps) {
           gradingCompany: card.gradingCompany,
           grade: card.grade,
         });
+        clearTimeout(timeout);
         if (!cancelled) setComps(result);
       } catch {
+        clearTimeout(timeout);
         if (!cancelled) setComps({ success: false, query: "", listings: [], stats: null, estimatedValue: null, marketNotes: null, error: "Lookup failed" });
       } finally {
         if (!cancelled) setLoading(false);

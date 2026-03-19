@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from "@/lib/utils";
-import { TrendingUp, TrendingDown, Minus } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, MoreVertical, Trash2, ExternalLink } from "lucide-react";
+import { deleteCard } from "@/actions/cards";
 import type { CardWithDetails } from "@/types/cards";
 
 interface CardGridItemProps {
@@ -17,9 +20,29 @@ function TrendIcon({ trend }: { trend: string | null }) {
 }
 
 export function CardGridItem({ card }: CardGridItemProps) {
+  const router = useRouter();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+
+  const handleDelete = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDeleting(true);
+    await deleteCard(card.id);
+    setMenuOpen(false);
+    router.refresh();
+  };
+
+  // Build subtitle — avoid duplicating year if it's already in the set name
+  const setDisplay = card.setName || "Unknown Set";
+  const yearStr = card.year ? String(card.year) : "";
+  const subtitle = yearStr && !setDisplay.includes(yearStr)
+    ? `${yearStr} ${setDisplay}`
+    : setDisplay;
+
   return (
-    <Link href={`/cards/${card.id}`}>
-      <div className="group relative rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+    <div className="group relative rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+      <Link href={`/cards/${card.id}`}>
         {/* Card image */}
         <div className="aspect-[2.5/3.5] bg-muted relative overflow-hidden">
           {(card.thumbnailUrl || card.originalUrl) ? (
@@ -50,16 +73,15 @@ export function CardGridItem({ card }: CardGridItemProps) {
 
         {/* Card info */}
         <div className="p-3 space-y-1">
-          <p className="font-semibold text-sm truncate">{card.playerName || "Unknown Player"}</p>
-          <p className="text-xs text-muted-foreground truncate">
-            {card.year} {card.setName || "Unknown Set"}
-            {card.cardNumber ? ` #${card.cardNumber}` : ""}
+          <p style={{ fontFamily: "var(--font-display)" }} className="text-sm truncate text-white">{card.playerName || "Unknown Player"}</p>
+          <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider text-muted-foreground truncate">
+            {subtitle}{card.cardNumber ? ` #${card.cardNumber}` : ""}
           </p>
           {card.parallelVariant && (
-            <p className="text-xs text-primary truncate">{card.parallelVariant}</p>
+            <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-[var(--color-burg-light)] truncate">{card.parallelVariant}</p>
           )}
           <div className="flex items-center justify-between pt-1">
-            <span className="text-sm font-medium">
+            <span style={{ fontFamily: "var(--font-mono)" }} className="text-sm font-medium">
               {card.estimatedValueCad
                 ? formatCurrency(card.estimatedValueCad, "CAD")
                 : "—"}
@@ -67,7 +89,39 @@ export function CardGridItem({ card }: CardGridItemProps) {
             <TrendIcon trend={card.priceTrend} />
           </div>
         </div>
+      </Link>
+
+      {/* Quick action dots */}
+      <div className="absolute top-2 right-2">
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); setMenuOpen(!menuOpen); }}
+          className="w-7 h-7 rounded-full bg-black/40 backdrop-blur-sm flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity hover:bg-black/60"
+        >
+          <MoreVertical className="h-3.5 w-3.5 text-white" />
+        </button>
+
+        {menuOpen && (
+          <>
+            <div className="fixed inset-0 z-10" onClick={() => setMenuOpen(false)} />
+            <div className="absolute right-0 top-8 z-20 w-36 rounded-lg border border-border bg-card shadow-lg overflow-hidden">
+              <Link
+                href={`/cards/${card.id}`}
+                className="flex items-center gap-2 px-3 py-2 text-xs text-white hover:bg-primary/10 transition-colors"
+                onClick={() => setMenuOpen(false)}
+              >
+                <ExternalLink className="h-3 w-3" /> View Details
+              </Link>
+              <button
+                onClick={handleDelete}
+                disabled={deleting}
+                className="flex items-center gap-2 px-3 py-2 text-xs text-destructive hover:bg-destructive/10 transition-colors w-full"
+              >
+                <Trash2 className="h-3 w-3" /> {deleting ? "Removing..." : "Remove"}
+              </button>
+            </div>
+          </>
+        )}
       </div>
-    </Link>
+    </div>
   );
 }

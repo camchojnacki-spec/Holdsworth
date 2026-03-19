@@ -185,9 +185,9 @@ The box_2d coordinates must be in the range 0-1000, representing the position re
       return null;
     }
 
-    // Add 3% padding around detected edges so card borders aren't clipped
-    const padX = (xmax - xmin) * 0.03;
-    const padY = (ymax - ymin) * 0.03;
+    // Add 5% padding around detected edges so card borders aren't clipped
+    const padX = (xmax - xmin) * 0.05;
+    const padY = (ymax - ymin) * 0.05;
     const px1 = Math.max(0, xmin - padX);
     const py1 = Math.max(0, ymin - padY);
     const px2 = Math.min(1, xmax + padX);
