@@ -1,5 +1,5 @@
 import { db, priceEstimates, priceSources, priceHistory } from "@holdsworth/db";
-import { eq, sql } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { GoogleGenAI } from "@google/genai";
 import { scrape130Point } from "../scrapers/scrape-130point";
 import { scrapeEbayApi } from "../scrapers/scrape-ebay-api";
@@ -14,24 +14,27 @@ interface SoldListing {
   date: string;
   source: string;
   url: string;
+  matchScore?: number;
+  excluded?: boolean;
+  excludeReason?: string;
 }
 
 /**
  * Execute a price lookup job.
- * Scrapes 130point + eBay API, analyzes with Gemini, stores in DB.
+ * Scrapes → pre-filters → Gemini analysis → stores in DB.
  */
 export async function handlePriceLookup(
   jobId: string,
   cardId: string,
   payload: CardPricePayload
-): Promise<{ success: boolean; listingCount: number; estimateUsd: number | null; sources: string[] }> {
+): Promise<{ success: boolean; listingCount: number; filteredCount: number; estimateUsd: number | null; sources: string[] }> {
   const queries = buildSearchQueries(payload);
   const primaryQuery = queries[0];
   const allListings: SoldListing[] = [];
   const sources: string[] = [];
   const usdToCad = 1.38;
 
-  // ── 130point (sold data — primary source) ──
+  // ── Scrape 130point (sold data) ──
   for (const query of queries.slice(0, 2)) {
     log("price-lookup", `130point search: "${query}"`, { jobId, cardId });
     const result = await scrape130Point(query);
@@ -47,11 +50,11 @@ export async function handlePriceLookup(
         });
       }
       sources.push("130point.com");
-      break; // First successful query is enough
+      break;
     }
   }
 
-  // ── eBay Browse API (active listings) ──
+  // ── Scrape eBay Browse API (active listings) ──
   log("price-lookup", `eBay API search: "${primaryQuery}"`, { jobId, cardId });
   const ebayResult = await scrapeEbayApi(primaryQuery);
   if (ebayResult.success && ebayResult.listings.length > 0) {
@@ -68,19 +71,22 @@ export async function handlePriceLookup(
     sources.push("eBay Active Listings");
   }
 
-  // ── Calculate stats ──
-  // Only use sold listings (not active) for valuation
-  const soldPrices = allListings
-    .filter((l) => l.source !== "ebay-active")
-    .map((l) => l.price)
-    .filter((p) => p > 0)
-    .sort((a, b) => a - b);
+  // ══════════════════════════════════════════
+  // LAYER 1: Code-based pre-filter (free, instant)
+  // ══════════════════════════════════════════
+  const preFiltered = preFilterListings(allListings, payload);
+  const soldFiltered = preFiltered.filter((l) => l.source !== "ebay-active" && !l.excluded);
+  const allFiltered = preFiltered.filter((l) => !l.excluded);
 
-  const allPrices = allListings.map((l) => l.price).filter((p) => p > 0).sort((a, b) => a - b);
-  const count = soldPrices.length || allPrices.length;
-  const prices = soldPrices.length > 0 ? soldPrices : allPrices;
+  log("price-lookup", `Pre-filter: ${allListings.length} → ${allFiltered.length} listings (${allListings.length - allFiltered.length} excluded)`, { jobId });
 
+  // ══════════════════════════════════════════
+  // LAYER 2: Gemini smart analysis
+  // ══════════════════════════════════════════
   let estimateUsd: number | null = null;
+  const soldPrices = soldFiltered.map((l) => l.price).sort((a, b) => a - b);
+  const allPrices = allFiltered.map((l) => l.price).sort((a, b) => a - b);
+  const prices = soldPrices.length > 0 ? soldPrices : allPrices;
 
   if (prices.length > 0) {
     const avg = prices.reduce((s, p) => s + p, 0) / prices.length;
@@ -88,8 +94,8 @@ export async function handlePriceLookup(
       ? (prices[prices.length / 2 - 1] + prices[prices.length / 2]) / 2
       : prices[Math.floor(prices.length / 2)];
 
-    // Use Gemini to analyze real data
-    const aiResult = await analyzeWithGemini(payload, allListings, {
+    // Gemini analyzes the pre-filtered results with card context
+    const aiResult = await analyzeWithGemini(payload, allFiltered, {
       count: prices.length,
       avg: Math.round(avg * 100) / 100,
       median: Math.round(median * 100) / 100,
@@ -98,7 +104,7 @@ export async function handlePriceLookup(
     });
 
     estimateUsd = aiResult?.mid ?? Math.round(median * 100) / 100;
-    const estimateCad = Math.round((estimateUsd) * usdToCad * 100) / 100;
+    const estimateCad = Math.round(estimateUsd * usdToCad * 100) / 100;
 
     // Upsert price estimate
     await db
@@ -107,8 +113,8 @@ export async function handlePriceLookup(
         cardId,
         estimatedValueUsd: String(estimateUsd),
         estimatedValueCad: String(estimateCad),
-        confidence: soldPrices.length >= 3 ? "high" : soldPrices.length > 0 ? "medium" : "low",
-        sampleSize: count,
+        confidence: soldFiltered.length >= 5 ? "high" : soldFiltered.length >= 2 ? "medium" : "low",
+        sampleSize: soldFiltered.length || allFiltered.length,
         priceTrend: "stable",
       })
       .onConflictDoUpdate({
@@ -116,27 +122,25 @@ export async function handlePriceLookup(
         set: {
           estimatedValueUsd: String(estimateUsd),
           estimatedValueCad: String(estimateCad),
-          confidence: soldPrices.length >= 3 ? "high" : soldPrices.length > 0 ? "medium" : "low",
-          sampleSize: count,
+          confidence: soldFiltered.length >= 5 ? "high" : soldFiltered.length >= 2 ? "medium" : "low",
+          sampleSize: soldFiltered.length || allFiltered.length,
           lastUpdated: new Date(),
         },
       });
 
-    log("price-lookup", `Stored estimate: $${estimateUsd} USD ($${estimateCad} CAD)`, { jobId, cardId });
+    log("price-lookup", `Stored estimate: $${estimateUsd} USD ($${estimateCad} CAD) from ${soldFiltered.length} sold comps`, { jobId, cardId });
   } else {
-    log("price-lookup", "No pricing data found from any source", { jobId, cardId });
+    log("price-lookup", "No relevant listings after filtering", { jobId, cardId });
   }
 
-  // ── Store individual comps in priceHistory ──
-  if (allListings.length > 0) {
-    // Ensure sources exist
+  // ── Store individual comps (only good matches) ──
+  if (allFiltered.length > 0) {
     const sourceMap = await ensureSources();
 
-    for (const listing of allListings.slice(0, 20)) {
+    for (const listing of allFiltered.slice(0, 20)) {
       const sourceId = listing.source === "ebay-active"
         ? sourceMap["eBay Active"]
         : sourceMap["eBay Sold"];
-
       if (!sourceId) continue;
 
       try {
@@ -146,29 +150,176 @@ export async function handlePriceLookup(
           priceUsd: String(listing.price),
           priceCad: String(Math.round(listing.price * usdToCad * 100) / 100),
           currencyRate: String(usdToCad),
-          saleDate: parseSaleDate(listing.date), // SAFE: returns null on invalid dates
+          saleDate: parseSaleDate(listing.date),
           listingUrl: listing.url || null,
           condition: null,
           graded: false,
         });
       } catch (err) {
-        // Skip duplicates or other insert errors — don't crash the pipeline
-        logError("price-lookup", `Failed to insert comp: ${listing.title.substring(0, 50)}`, err);
+        logError("price-lookup", `Failed to insert comp`, err);
       }
     }
 
-    log("price-lookup", `Stored ${Math.min(allListings.length, 20)} comps`, { jobId, cardId });
+    log("price-lookup", `Stored ${Math.min(allFiltered.length, 20)} comps`, { jobId, cardId });
   }
 
   return {
-    success: allListings.length > 0,
+    success: allFiltered.length > 0,
     listingCount: allListings.length,
+    filteredCount: allFiltered.length,
     estimateUsd,
     sources,
   };
 }
 
-// ── Helpers ──
+// ══════════════════════════════════════════
+// LAYER 1: Code-based pre-filter
+// ══════════════════════════════════════════
+
+/**
+ * Fast, free filtering before Gemini analysis.
+ * Removes obvious non-matches: wrong parallels, lots, graded vs raw mismatches.
+ */
+function preFilterListings(listings: SoldListing[], card: CardPricePayload): SoldListing[] {
+  const cardParallel = (card.parallelVariant || "").toLowerCase();
+  const isBaseCard = !cardParallel || cardParallel === "base" || cardParallel === "base card";
+
+  // Numbered parallel patterns: /5, /10, /25, /50, /75, /99, /150, /199, /250, etc.
+  const numberedParallelRegex = /\/\s*(\d{1,4})\b/;
+  // Color parallels that indicate non-base
+  const colorParallels = ["red", "gold", "orange", "purple", "green", "pink", "black", "platinum", "superfractor", "sapphire"];
+  // Lot/bundle indicators
+  const lotIndicators = ["lot", "bundle", "x2", "x3", "x4", "x5", "lot of", "card lot", "team lot", "collection"];
+  // Graded indicators
+  const gradedIndicators = ["psa ", "bgs ", "sgc ", "cgc ", " psa", " bgs", " sgc", " cgc", "psa10", "psa9", "bgs9"];
+
+  return listings.map((listing) => {
+    const titleLower = listing.title.toLowerCase();
+
+    // Exclude lots/bundles
+    if (lotIndicators.some((ind) => titleLower.includes(ind))) {
+      return { ...listing, excluded: true, excludeReason: "lot/bundle" };
+    }
+
+    // Exclude graded if our card is raw
+    if (!card.graded && gradedIndicators.some((g) => titleLower.includes(g))) {
+      return { ...listing, excluded: true, excludeReason: "graded (card is raw)" };
+    }
+
+    // Exclude raw if our card is graded
+    if (card.graded && !gradedIndicators.some((g) => titleLower.includes(g))) {
+      return { ...listing, excluded: true, excludeReason: "raw (card is graded)" };
+    }
+
+    // For base cards: exclude numbered parallels
+    if (isBaseCard) {
+      const numMatch = titleLower.match(numberedParallelRegex);
+      if (numMatch) {
+        const printRun = parseInt(numMatch[1]);
+        // Exclude short prints (/5, /10, /25, /50, /75, /99) but allow large runs (/2025, /500+)
+        if (printRun <= 199) {
+          return { ...listing, excluded: true, excludeReason: `numbered parallel /${printRun}` };
+        }
+      }
+
+      // Exclude known color parallels for base cards
+      if (colorParallels.some((color) => {
+        // Must be a standalone word, not part of team name (e.g., "Red Sox")
+        const regex = new RegExp(`\\b${color}\\b(?!\\s+(sox|wings|bulls|storm))`, "i");
+        return regex.test(listing.title);
+      })) {
+        return { ...listing, excluded: true, excludeReason: "color parallel" };
+      }
+    }
+
+    // For specific parallels: only include if title mentions our parallel
+    if (!isBaseCard && cardParallel) {
+      const parallelWords = cardParallel.split(/\s+/).filter((w) => w.length > 2);
+      const hasParallelMatch = parallelWords.some((word) => titleLower.includes(word.toLowerCase()));
+      if (!hasParallelMatch) {
+        // Don't exclude, but note it's a weak match
+        return { ...listing, matchScore: 50 };
+      }
+    }
+
+    return { ...listing, matchScore: 100 };
+  });
+}
+
+// ══════════════════════════════════════════
+// LAYER 2: Gemini smart analysis
+// ══════════════════════════════════════════
+
+async function analyzeWithGemini(
+  card: CardPricePayload,
+  listings: SoldListing[],
+  stats: { count: number; avg: number; median: number; low: number; high: number }
+): Promise<{ low: number; mid: number; high: number } | null> {
+  const apiKey = process.env.GOOGLE_AI_API_KEY;
+  if (!apiKey) return null;
+
+  try {
+    const ai = new GoogleGenAI({ apiKey });
+
+    // Build card description for Gemini
+    const cardDesc = [
+      card.playerName,
+      card.year,
+      card.setName,
+      card.cardNumber ? `#${card.cardNumber}` : null,
+      card.parallelVariant || "base (no parallel)",
+      card.isAutograph ? "autograph" : null,
+      card.subsetOrInsert,
+      card.graded ? `${card.gradingCompany} ${card.grade}` : "raw (ungraded)",
+    ].filter(Boolean).join(" | ");
+
+    const listingSummary = listings
+      .filter((l) => !l.excluded)
+      .slice(0, 25)
+      .map((l, i) => `${i + 1}. "$${l.price} — ${l.title}" [${l.source}, ${l.date || "no date"}]`)
+      .join("\n");
+
+    const response = await ai.models.generateContent({
+      model: "gemini-2.5-flash",
+      contents: [{
+        role: "user",
+        parts: [{
+          text: `You are a baseball card market analyst. Analyze these comparable sales and estimate fair market value.
+
+MY EXACT CARD: ${cardDesc}
+
+COMPARABLE LISTINGS (pre-filtered, ${stats.count} total):
+${listingSummary}
+
+STATS: Avg $${stats.avg} | Median $${stats.median} | Low $${stats.low} | High $${stats.high}
+
+ANALYSIS RULES:
+1. Only use listings that match MY EXACT CARD (same parallel, same condition type)
+2. EXCLUDE: different parallels (e.g., /5 Red when my card is base), lots/bundles, graded if mine is raw
+3. EXCLUDE: "best offer accepted" listings where price may not reflect actual sale price (these often show the listing price, not the accepted offer)
+4. Weight recent sales more heavily than older ones
+5. If fewer than 3 clean matches remain, note low confidence
+
+Return JSON only:
+{"low": 0, "mid": 0, "high": 0}
+
+The "mid" should be what a buyer would reasonably pay today for this exact card.`,
+        }],
+      }],
+      config: { temperature: 0.2, maxOutputTokens: 256 },
+    });
+
+    const text = response.text ?? "";
+    const match = text.match(/\{[\s\S]*\}/);
+    if (!match) return null;
+    return JSON.parse(match[0]);
+  } catch (err) {
+    logError("price-lookup", "Gemini analysis failed", err);
+    return null;
+  }
+}
+
+// ── Source management ──
 
 const sourceCache: Record<string, string> = {};
 
@@ -187,49 +338,4 @@ async function ensureSources(): Promise<Record<string, string>> {
   }
 
   return sourceCache;
-}
-
-async function analyzeWithGemini(
-  card: CardPricePayload,
-  listings: SoldListing[],
-  stats: { count: number; avg: number; median: number; low: number; high: number }
-): Promise<{ low: number; mid: number; high: number } | null> {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) return null;
-
-  try {
-    const ai = new GoogleGenAI({ apiKey });
-    const listingSummary = listings
-      .slice(0, 15)
-      .map((l) => `"${l.title}" — $${l.price} (${l.date || "no date"}, ${l.source})`)
-      .join("\n");
-
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash",
-      contents: [{
-        role: "user",
-        parts: [{
-          text: `Analyze these REAL sold listings and estimate fair market value.
-
-CARD: ${card.playerName} ${card.year || ""} ${card.setName || ""} ${card.parallelVariant || "base"} ${card.isAutograph ? "autograph" : ""}
-
-DATA (${stats.count} sales): Avg $${stats.avg} | Median $${stats.median} | Low $${stats.low} | High $${stats.high}
-
-SALES:
-${listingSummary}
-
-Return JSON only: {"low": 0, "mid": 0, "high": 0}
-Base on real data. Discount outliers. Mid = reasonable buy price today.`,
-        }],
-      }],
-      config: { temperature: 0.2, maxOutputTokens: 256 },
-    });
-
-    const text = response.text ?? "";
-    const match = text.match(/\{[\s\S]*\}/);
-    if (!match) return null;
-    return JSON.parse(match[0]);
-  } catch {
-    return null;
-  }
 }
