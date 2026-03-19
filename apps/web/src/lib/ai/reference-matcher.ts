@@ -131,7 +131,7 @@ export async function matchAgainstReference(
  * Apply reference match corrections to an AI scan result.
  * Returns the corrected result with a flag indicating what changed.
  */
-export function applyReferenceCorrections(
+export async function applyReferenceCorrections(
   aiResult: CardScanResponse,
   match: ReferenceMatch
 ): CardScanResponse & { _aiCorrected: boolean; _referenceCardId: string; _subsetOrInsert: string | null } {

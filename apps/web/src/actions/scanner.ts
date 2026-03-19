@@ -61,7 +61,7 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     const refMatch = await matchAgainstReference(aiResult);
     if (refMatch) {
       console.log(`[scanner] Reference match found: ${aiResult.card_number} → ${refMatch.correctedSetName} (${refMatch.subsetName || "base"})`);
-      finalResult = applyReferenceCorrections(aiResult, refMatch);
+      finalResult = await applyReferenceCorrections(aiResult, refMatch);
     } else {
       console.log(`[scanner] No reference match for ${aiResult.card_number} — using AI identification as-is`);
     }
