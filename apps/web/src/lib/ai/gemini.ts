@@ -89,15 +89,15 @@ export async function scanCardWithGemini(
 }
 
 /**
- * Use Gemini to detect card crop region in an image.
- * Returns a simple rectangle + rotation for reliable canvas cropping.
+ * Use Gemini's native box_2d object detection to find the card.
+ * Returns coordinates normalized 0-1 (converted from Gemini's 0-1000 scale).
  */
 export interface CardCropRegion {
   x: number;      // left edge as fraction 0-1
   y: number;      // top edge as fraction 0-1
   width: number;   // width as fraction 0-1
   height: number;  // height as fraction 0-1
-  rotation: number; // degrees clockwise to straighten (usually 0 or small)
+  rotation: number; // always 0 for box_2d (axis-aligned)
 }
 
 export async function detectCardBounds(
@@ -110,33 +110,18 @@ export async function detectCardBounds(
   const ai = new GoogleGenAI({ apiKey });
 
   const response = await ai.models.generateContent({
-    model: "gemini-2.5-pro",
+    model: "gemini-2.5-flash",
     contents: [
       {
         role: "user",
         parts: [
           {
-            text: `You are a precise image analysis tool. Find the trading card in this image and return its exact position.
+            text: `Detect the trading card in this image. Return a JSON list of detected objects with bounding boxes.
 
-The card has a clear rectangular border. I need the coordinates of the card's PRINTED BORDER EDGES — not the edges of fingers, shadows, or background.
+Return ONLY this JSON (no other text):
+[{"box_2d": [ymin, xmin, ymax, xmax], "label": "trading_card"}]
 
-Return ONLY this JSON:
-{
-  "x": 0.0,
-  "y": 0.0,
-  "width": 0.0,
-  "height": 0.0,
-  "rotation": 0.0
-}
-
-Coordinate system (all values are fractions 0.0-1.0 of image dimensions):
-- x = fraction from left edge of image to LEFT edge of card border
-- y = fraction from top edge of image to TOP edge of card border
-- width = card border width as fraction of image width
-- height = card border height as fraction of image height
-- rotation = degrees the card is rotated clockwise from vertical (can be negative for counter-clockwise, typically -15 to +15 degrees)
-
-CRITICAL: Be extremely precise. Measure to the card's printed border, not to fingers or shadows. If the card is tilted even slightly (1-2 degrees), report the rotation accurately. The resulting crop must show the complete card face with no fingers, desk, or background visible.`,
+The box_2d coordinates must be in the range 0-1000, representing the position relative to image dimensions. The bounding box should tightly fit the card's printed border edges — exclude fingers, hands, and background. Only detect the single most prominent trading card.`,
           },
           {
             inlineData: {
@@ -154,17 +139,31 @@ CRITICAL: Be extremely precise. Measure to the card's printed border, not to fin
   });
 
   const text = response.text ?? "";
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return null;
+
+  // Parse the box_2d array from the response
+  const arrayMatch = text.match(/\[[\s\S]*\]/);
+  if (!arrayMatch) return null;
 
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as CardCropRegion;
-    // Validate ranges
-    if (parsed.x < 0 || parsed.x > 1 || parsed.y < 0 || parsed.y > 1 ||
-        parsed.width <= 0 || parsed.width > 1 || parsed.height <= 0 || parsed.height > 1) {
-      return null;
-    }
-    return parsed;
+    const parsed = JSON.parse(arrayMatch[0]);
+    const detection = Array.isArray(parsed) ? parsed[0] : parsed;
+    const box = detection?.box_2d;
+
+    if (!box || !Array.isArray(box) || box.length !== 4) return null;
+
+    const [ymin, xmin, ymax, xmax] = box.map((v: number) => v / 1000);
+
+    // Validate
+    if (xmin < 0 || xmin >= xmax || ymin < 0 || ymin >= ymax ||
+        xmax > 1.05 || ymax > 1.05) return null;
+
+    return {
+      x: Math.max(0, xmin),
+      y: Math.max(0, ymin),
+      width: Math.min(1, xmax) - Math.max(0, xmin),
+      height: Math.min(1, ymax) - Math.max(0, ymin),
+      rotation: 0,
+    };
   } catch {
     return null;
   }
