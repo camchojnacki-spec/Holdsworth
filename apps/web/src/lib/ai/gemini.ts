@@ -116,12 +116,24 @@ export async function detectCardBounds(
         role: "user",
         parts: [
           {
-            text: `Detect the trading card in this image. Return a JSON list of detected objects with bounding boxes.
+            text: `Detect the rectangular trading card in this photograph. The card is being held by a person's hand.
 
-Return ONLY this JSON (no other text):
+Return ONLY this exact JSON format (no other text, no markdown):
 [{"box_2d": [ymin, xmin, ymax, xmax], "label": "trading_card"}]
 
-The box_2d coordinates must be in the range 0-1000, representing the position relative to image dimensions. The bounding box should tightly fit the card's printed border edges — exclude fingers, hands, and background. Only detect the single most prominent trading card.`,
+COORDINATE RULES:
+- Coordinates are integers from 0 to 1000
+- 0 = top/left edge of the image, 1000 = bottom/right edge
+- ymin = top edge of card, xmin = left edge of card
+- ymax = bottom edge of card, xmax = right edge of card
+
+CRITICAL DETECTION RULES:
+- Find the OUTER PRINTED BORDER of the card — the very edge where card stock meets background
+- The card is rectangular, approximately 2.5 x 3.5 inch ratio
+- EXCLUDE all fingers, thumbs, hands — crop AT the card edge, not at the fingers
+- Include the full card — do NOT cut off any text, logos, or borders at the top/bottom/sides
+- If the card has a colored border (blue, red, gold), include the ENTIRE border
+- Better to include 1-2% extra background than to cut off any part of the card`,
           },
           {
             inlineData: {
@@ -185,9 +197,9 @@ The box_2d coordinates must be in the range 0-1000, representing the position re
       return null;
     }
 
-    // Add 5% padding around detected edges so card borders aren't clipped
-    const padX = (xmax - xmin) * 0.05;
-    const padY = (ymax - ymin) * 0.05;
+    // Add 8% padding around detected edges so card borders aren't clipped
+    const padX = (xmax - xmin) * 0.08;
+    const padY = (ymax - ymin) * 0.08;
     const px1 = Math.max(0, xmin - padX);
     const py1 = Math.max(0, ymin - padY);
     const px2 = Math.min(1, xmax + padX);

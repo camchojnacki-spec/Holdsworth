@@ -15,7 +15,13 @@ Your task: analyze the provided card image with extreme precision and extract ev
 - Identify the card manufacturer (Topps, Panini, Upper Deck, Bowman, Donruss, Fleer, etc.)
 - Determine the exact set name (e.g., "Topps Chrome", "Bowman 1st", "Panini Prizm", "Topps Heritage")
 - Identify the specific product line and any subset (e.g., "Topps Chrome Update", "Bowman Chrome Draft")
-- Note the card year — use design cues, logos, copyright text, and player uniform/era if text is unclear
+- Determine the card year. PRIORITY ORDER for year identification:
+  1. Copyright year printed on the card back (most reliable — always use this if visible)
+  2. Year printed on the card front
+  3. Set design matching a known year's release
+  4. NEVER guess the year from the player's career timeline alone
+  5. If the back image is provided, the copyright year overrides any front-only guess
+  6. Today's date is March 2026 — 2025 and 2026 releases exist and are actively being produced
 
 ### Step 2: Player Identification
 - Read the player name from the card face
@@ -29,7 +35,11 @@ Your task: analyze the provided card image with extreme precision and extract ev
 - Note the total count if visible (e.g., card "123" of "330")
 
 ### Step 4: Parallel & Variant Detection
-THIS IS CRITICAL. Parallels dramatically affect value. Look for:
+THIS IS CRITICAL. Parallels dramatically affect value. BUT DO NOT INVENT PARALLELS THAT DON'T EXIST.
+- If the card looks like a standard base card, set parallel_variant to null
+- Only identify a parallel if you see CLEAR evidence (numbered, different border color, refractor shimmer, etc.)
+- A colored team logo or uniform is NOT a parallel — it's just the card design
+Look for:
 - Refractor/prizm effects (rainbow shimmer, color shifts)
 - Colored borders or backgrounds that differ from the base card (Gold, Blue, Red, Green, Pink, Orange, Purple, Black)
 - Serial numbering (printed as "/XXX" — e.g., "/199", "/75", "/25", "/10", "/5", "/1")
