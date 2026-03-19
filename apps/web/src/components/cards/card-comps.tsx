@@ -146,6 +146,7 @@ export function CardComps({ cardId }: CardCompsProps) {
                       ? (h.listingTitle.length > 65 ? h.listingTitle.substring(0, 62) + "..." : h.listingTitle)
                       : `${h.sourceName} listing`;
                     const hasLink = !!h.listingUrl;
+                    const is130point = h.sourceName === "130point";
 
                     return (
                       <div key={i} className="flex items-center justify-between py-2 px-3 rounded-lg bg-secondary/10 hover:bg-secondary/20 transition-colors">
@@ -160,7 +161,16 @@ export function CardComps({ cardId }: CardCompsProps) {
                             <p className="text-sm text-white truncate">{displayTitle}</p>
                           )}
                           <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground">
-                            {h.saleDate ? new Date(h.saleDate).toLocaleDateString() : "active"} · {h.sourceName}
+                            {h.saleDate ? new Date(h.saleDate).toLocaleDateString() : "active"}
+                            {" · "}
+                            {is130point ? (
+                              <a href="https://130point.com/sales/" target="_blank" rel="noopener noreferrer"
+                                className="hover:text-[var(--color-burg-light)] transition-colors underline decoration-dotted underline-offset-2">
+                                130point
+                              </a>
+                            ) : (
+                              h.sourceName
+                            )}
                           </p>
                         </div>
                         <div className="flex items-center gap-2 flex-shrink-0">
