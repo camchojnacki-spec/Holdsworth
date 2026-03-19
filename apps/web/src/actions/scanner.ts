@@ -23,8 +23,10 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     }
 
     const validTypes = ["image/jpeg", "image/png", "image/webp"];
-    if (!validTypes.includes(frontFile.type)) {
-      return { success: false, error: "Unsupported image format. Use JPEG, PNG, or WebP." };
+    // On mobile, blob type can be empty — default to jpeg for camera captures
+    const frontType = validTypes.includes(frontFile.type) ? frontFile.type : "image/jpeg";
+    if (frontFile.type && !validTypes.includes(frontFile.type)) {
+      return { success: false, error: `Unsupported image format: ${frontFile.type}. Use JPEG, PNG, or WebP.` };
     }
     if (frontFile.size > 20 * 1024 * 1024) {
       return { success: false, error: "Image exceeds 20MB limit" };
@@ -40,7 +42,7 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     if (backFile && backFile.size > 0) {
       const backBuffer = await backFile.arrayBuffer();
       backBase64 = Buffer.from(backBuffer).toString("base64");
-      backMimeType = backFile.type;
+      backMimeType = validTypes.includes(backFile.type) ? backFile.type : "image/jpeg";
     }
 
     // Run identification (with optional back) and bounding box detection in parallel
@@ -49,8 +51,8 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
       Promise<CardCropRegion | null>,
       Promise<CardCropRegion | null>,
     ] = [
-      scanCardWithGemini(frontBase64, frontFile.type, backBase64, backMimeType),
-      detectCardBounds(frontBase64, frontFile.type),
+      scanCardWithGemini(frontBase64, frontType, backBase64, backMimeType),
+      detectCardBounds(frontBase64, frontType),
       backBase64 ? detectCardBounds(backBase64, backMimeType!) : Promise.resolve(null),
     ];
 
@@ -66,6 +68,7 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     };
   } catch (err) {
     const processingTimeMs = Date.now() - startTime;
+    console.error("[scanCard] Error:", err);
     const message = err instanceof Error ? err.message : "Unknown error during scan";
     return {
       success: false,
