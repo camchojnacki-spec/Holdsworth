@@ -162,22 +162,30 @@ export default function ScanPage() {
   const handleFileUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    const dataUrl = await new Promise<string>((res) => {
+
+    // Read the file as data URL for preview
+    const rawDataUrl = await new Promise<string>((res) => {
       const r = new FileReader();
       r.onload = (ev) => res(ev.target?.result as string);
       r.readAsDataURL(file);
     });
 
+    // Compress for upload — keep high quality but limit to 2000px width
+    // Phone cameras produce 12MP+ images that are too large for server actions
+    const compressed = await compressImage(rawDataUrl, 2000);
+    const compressedBlob = await dataUrlToBlob(compressed);
+
     if (captureTarget === "front") {
-      setFrontPreview(dataUrl);
-      setFrontBlob(file);
+      setFrontPreview(compressed);
+      setFrontBlob(compressedBlob);
       setState("front-captured");
     } else {
-      setBackPreview(dataUrl);
-      setBackBlob(file);
-      submitForAnalysis(frontBlob!, file, dataUrl);
+      setBackPreview(compressed);
+      setBackBlob(compressedBlob);
+      submitForAnalysis(frontBlob!, compressedBlob, compressed);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
+    if (cameraInputRef.current) cameraInputRef.current.value = "";
   }, [captureTarget, frontBlob]);
 
   const submitForAnalysis = async (front: Blob, back: Blob | null, backDataUrl?: string) => {
