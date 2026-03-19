@@ -96,20 +96,8 @@ export default async function CardDetailPage({
         </div>
       </div>
 
-      {/* Market Comps — loads async with searching animation */}
-      <CardComps card={{
-        playerName: card.playerName ?? "",
-        year: card.year,
-        setName: card.setName,
-        cardNumber: card.cardNumber,
-        parallelVariant: card.parallelVariant,
-        manufacturerName: card.manufacturerName,
-        graded: card.graded,
-        gradingCompany: card.gradingCompany,
-        grade: card.grade,
-        isAutograph: card.isAutograph,
-        subsetOrInsert: card.subsetOrInsert,
-      }} />
+      {/* Market Comps — reads cached data from DB */}
+      <CardComps cardId={card.id} />
 
       {(card.purchasePrice || card.purchaseSource) && (
         <Card>

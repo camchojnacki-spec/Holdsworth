@@ -1,6 +1,6 @@
 "use server";
 
-import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates } from "@holdsworth/db";
+import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, priceSources, priceHistory } from "@holdsworth/db";
 import { eq, desc, ilike, and, sql, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { CardWithDetails } from "@/types/cards";
@@ -161,7 +161,95 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
 
   revalidatePath("/cards");
   revalidatePath("/");
+
+  // Fire-and-forget: trigger background price lookup
+  queuePriceLookup(card.id, {
+    playerName: input.playerName,
+    year: input.year,
+    setName: input.setName,
+    manufacturer: input.manufacturer,
+    cardNumber: input.cardNumber,
+    parallelVariant: input.parallelVariant,
+    isAutograph: input.isAutograph,
+    subsetOrInsert: input.subsetOrInsert,
+    graded: input.graded,
+    gradingCompany: input.gradingCompany,
+    grade: input.grade,
+  }).catch((err) => console.error("[cards] Background price lookup failed:", err));
+
   return { id: card.id };
+}
+
+/**
+ * Queue a background price lookup for a card.
+ * Runs asynchronously — does not block card creation.
+ * Stores results in priceEstimates table.
+ */
+async function queuePriceLookup(cardId: string, card: {
+  playerName: string;
+  year?: number;
+  setName?: string;
+  manufacturer?: string;
+  cardNumber?: string;
+  parallelVariant?: string;
+  isAutograph?: boolean;
+  subsetOrInsert?: string;
+  graded?: boolean;
+  gradingCompany?: string;
+  grade?: string;
+}) {
+  const { lookupCardPrice } = await import("./prices");
+
+  console.log(`[prices] Background lookup started for card ${cardId}`);
+  const result = await lookupCardPrice(card);
+
+  if (result.estimatedValue) {
+    const usdToCad = 1.38;
+    await db.insert(priceEstimates).values({
+      cardId,
+      estimatedValueUsd: String(result.estimatedValue.mid),
+      estimatedValueCad: String(Math.round(result.estimatedValue.mid * usdToCad * 100) / 100),
+      confidence: result.dataSources.some(s => !s.includes("AI")) ? "medium" : "low",
+      sampleSize: result.stats?.count ?? 0,
+      priceTrend: "stable",
+    }).onConflictDoUpdate({
+      target: priceEstimates.cardId,
+      set: {
+        estimatedValueUsd: String(result.estimatedValue.mid),
+        estimatedValueCad: String(Math.round(result.estimatedValue.mid * usdToCad * 100) / 100),
+        confidence: result.dataSources.some(s => !s.includes("AI")) ? "medium" : "low",
+        sampleSize: result.stats?.count ?? 0,
+        lastUpdated: new Date(),
+      },
+    });
+    console.log(`[prices] Stored estimate for card ${cardId}: $${result.estimatedValue.mid} USD`);
+  }
+
+  // Store individual comps in priceHistory
+  if (result.listings.length > 0) {
+    // Ensure eBay source exists
+    let [ebaySource] = await db.select().from(priceSources).where(eq(priceSources.name, "eBay")).limit(1);
+    if (!ebaySource) {
+      [ebaySource] = await db.insert(priceSources).values({ name: "eBay", baseUrl: "https://www.ebay.com", scraperType: "playwright" }).returning();
+    }
+
+    for (const listing of result.listings.slice(0, 10)) {
+      await db.insert(priceHistory).values({
+        cardId,
+        sourceId: ebaySource.id,
+        priceUsd: String(listing.price),
+        priceCad: String(Math.round(listing.price * 1.38 * 100) / 100),
+        currencyRate: "1.38",
+        saleDate: listing.date ? new Date(listing.date) : null,
+        listingUrl: listing.url || null,
+        condition: null,
+        graded: false,
+      }).catch(() => {}); // Skip duplicates
+    }
+    console.log(`[prices] Stored ${Math.min(result.listings.length, 10)} comps for card ${cardId}`);
+  }
+
+  revalidatePath(`/cards/${cardId}`);
 }
 
 // ── Read ──
@@ -321,4 +409,66 @@ export async function deleteCard(id: string) {
   await db.delete(cards).where(eq(cards.id, id));
   revalidatePath("/cards");
   revalidatePath("/");
+}
+
+// ── Get cached comps from database ──
+
+export interface CachedComps {
+  estimate: {
+    valueUsd: number;
+    valueCad: number;
+    confidence: string;
+    sampleSize: number;
+    trend: string;
+    lastUpdated: Date;
+  } | null;
+  history: Array<{
+    priceUsd: string;
+    priceCad: string;
+    saleDate: Date | null;
+    listingUrl: string | null;
+    sourceName: string;
+  }>;
+}
+
+export async function getCardComps(cardId: string): Promise<CachedComps> {
+  // Get cached estimate
+  const [estimate] = await db
+    .select()
+    .from(priceEstimates)
+    .where(eq(priceEstimates.cardId, cardId))
+    .limit(1);
+
+  // Get price history (recent comps)
+  const history = await db
+    .select({
+      priceUsd: priceHistory.priceUsd,
+      priceCad: priceHistory.priceCad,
+      saleDate: priceHistory.saleDate,
+      listingUrl: priceHistory.listingUrl,
+      sourceName: priceSources.name,
+    })
+    .from(priceHistory)
+    .leftJoin(priceSources, eq(priceHistory.sourceId, priceSources.id))
+    .where(eq(priceHistory.cardId, cardId))
+    .orderBy(desc(priceHistory.saleDate))
+    .limit(15);
+
+  return {
+    estimate: estimate ? {
+      valueUsd: parseFloat(estimate.estimatedValueUsd ?? "0"),
+      valueCad: parseFloat(estimate.estimatedValueCad ?? "0"),
+      confidence: estimate.confidence ?? "low",
+      sampleSize: estimate.sampleSize ?? 0,
+      trend: estimate.priceTrend ?? "stable",
+      lastUpdated: estimate.lastUpdated,
+    } : null,
+    history: history.map(h => ({
+      priceUsd: h.priceUsd ?? "0",
+      priceCad: h.priceCad ?? "0",
+      saleDate: h.saleDate,
+      listingUrl: h.listingUrl,
+      sourceName: h.sourceName ?? "Unknown",
+    })),
+  };
 }
