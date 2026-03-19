@@ -1,12 +1,13 @@
-import "dotenv/config";
-import { startWorker, stopWorker } from "./worker";
-
-// Load .env.local manually since dotenv/config only reads .env
+// Load .env.local BEFORE any other imports (db reads DATABASE_URL at import time)
 import { readFileSync } from "fs";
-import { resolve } from "path";
+import { fileURLToPath } from "url";
+import { dirname, resolve } from "path";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
 
 try {
-  const envPath = resolve(import.meta.dirname, "../.env.local");
+  const envPath = resolve(__dirname, "../.env.local");
   const envContent = readFileSync(envPath, "utf-8");
   for (const line of envContent.split("\n")) {
     const trimmed = line.trim();
@@ -19,9 +20,13 @@ try {
       process.env[key] = value;
     }
   }
-} catch {
-  // .env.local not found, rely on environment variables
+  console.log("Loaded .env.local");
+} catch (e) {
+  console.log("No .env.local found, using environment variables");
 }
+
+// Now import worker (which imports @holdsworth/db which reads DATABASE_URL)
+const { startWorker, stopWorker } = await import("./worker");
 
 // Graceful shutdown
 process.on("SIGINT", () => {
