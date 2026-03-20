@@ -2,6 +2,7 @@
 
 import { scanCardWithGemini, detectCardBounds, type CardScanResponse, type CardCropRegion } from "@/lib/ai/gemini";
 import { matchAgainstReference, applyReferenceCorrections } from "@/lib/ai/reference-matcher";
+import { db, scanSessions } from "@holdsworth/db";
 
 export interface ScanActionResult {
   success: boolean;
@@ -68,6 +69,20 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
 
     const processingTimeMs = Date.now() - startTime;
 
+    // Record scan session for analytics
+    try {
+      await db.insert(scanSessions).values({
+        status: "completed",
+        photoUrl: "(stored-on-client)",
+        aiProvider: "gemini",
+        aiResponse: finalResult as unknown as Record<string, unknown>,
+        confidenceScore: String(finalResult.confidence ?? 0),
+        processingTimeMs,
+      });
+    } catch {
+      // Non-critical — don't fail the scan if session recording fails
+    }
+
     return {
       success: true,
       data: finalResult,
@@ -79,6 +94,20 @@ export async function scanCard(formData: FormData): Promise<ScanActionResult> {
     const processingTimeMs = Date.now() - startTime;
     console.error("[scanCard] Error:", err);
     const message = err instanceof Error ? err.message : "Unknown error during scan";
+
+    // Record failed scan session
+    try {
+      await db.insert(scanSessions).values({
+        status: "failed",
+        photoUrl: "(stored-on-client)",
+        aiProvider: "gemini",
+        aiResponse: { error: message },
+        processingTimeMs,
+      });
+    } catch {
+      // Non-critical
+    }
+
     return {
       success: false,
       error: message,

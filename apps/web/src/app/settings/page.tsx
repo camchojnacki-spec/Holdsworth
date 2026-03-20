@@ -1,14 +1,41 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Save } from "lucide-react";
+import { Save, Loader2, Check } from "lucide-react";
+import { getSettings, saveSettings, type SettingsData } from "@/actions/settings";
 
 export default function SettingsPage() {
-  const [province, setProvince] = useState("ON");
-  const [googleApiKey, setGoogleApiKey] = useState("");
+  const [settings, setSettings] = useState<SettingsData>({ province: "ON", updateFrequency: "weekly", alertThreshold: 10 });
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    getSettings().then((s) => {
+      setSettings(s);
+      setLoading(false);
+    });
+  }, []);
+
+  const handleSave = async () => {
+    setSaving(true);
+    setSaved(false);
+    await saveSettings(settings);
+    setSaving(false);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2000);
+  };
+
+  if (loading) {
+    return (
+      <div className="mx-auto max-w-2xl flex items-center justify-center py-20">
+        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -25,10 +52,10 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-muted-foreground">Province</label>
+            <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Province</label>
             <select
-              value={province}
-              onChange={(e) => setProvince(e.target.value)}
+              value={settings.province}
+              onChange={(e) => setSettings(s => ({ ...s, province: e.target.value }))}
               className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
             >
               <option value="AB">Alberta</option>
@@ -49,28 +76,6 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      {/* API Keys */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">API Configuration</CardTitle>
-          <CardDescription>Configure your Google Cloud AI API key for card scanning</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div>
-            <label className="text-sm font-medium text-muted-foreground">Google AI API Key</label>
-            <Input
-              type="password"
-              value={googleApiKey}
-              onChange={(e) => setGoogleApiKey(e.target.value)}
-              placeholder="Enter your Google AI API key"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Used for Gemini Vision card identification
-            </p>
-          </div>
-        </CardContent>
-      </Card>
-
       {/* Price tracking */}
       <Card>
         <CardHeader>
@@ -79,17 +84,26 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent className="space-y-4">
           <div>
-            <label className="text-sm font-medium text-muted-foreground">Update Frequency</label>
-            <select className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm">
+            <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Update Frequency</label>
+            <select
+              value={settings.updateFrequency}
+              onChange={(e) => setSettings(s => ({ ...s, updateFrequency: e.target.value }))}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            >
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
               <option value="manual">Manual only</option>
             </select>
           </div>
           <div>
-            <label className="text-sm font-medium text-muted-foreground">Alert Threshold</label>
+            <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Alert Threshold</label>
             <div className="flex items-center gap-2">
-              <Input type="number" defaultValue="10" className="w-24" />
+              <Input
+                type="number"
+                value={settings.alertThreshold}
+                onChange={(e) => setSettings(s => ({ ...s, alertThreshold: parseInt(e.target.value) || 0 }))}
+                className="w-24"
+              />
               <span className="text-sm text-muted-foreground">% price change triggers alert</span>
             </div>
           </div>
@@ -97,9 +111,15 @@ export default function SettingsPage() {
       </Card>
 
       <div className="flex justify-end">
-        <Button className="gap-2">
-          <Save className="h-4 w-4" />
-          Save Settings
+        <Button onClick={handleSave} disabled={saving} className="gap-2">
+          {saving ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : saved ? (
+            <Check className="h-4 w-4" />
+          ) : (
+            <Save className="h-4 w-4" />
+          )}
+          {saving ? "Saving..." : saved ? "Saved" : "Save Settings"}
         </Button>
       </div>
     </div>

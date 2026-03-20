@@ -10,3 +10,4 @@ export { vendors, vendorProducts, vendorPriceHistory } from "./vendors";
 export { alerts } from "./alerts";
 export { scanSessions } from "./scan-sessions";
 export { currencyRates } from "./currency";
+export { userSettings } from "./settings";

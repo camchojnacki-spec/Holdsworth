@@ -39,140 +39,144 @@ export interface CreateCardInput {
 }
 
 export async function createCard(input: CreateCardInput): Promise<{ id: string }> {
-  // Find or create player
-  let playerId: string | undefined;
-  if (input.playerName) {
-    const existing = await db
-      .select()
-      .from(players)
-      .where(ilike(players.name, input.playerName))
-      .limit(1);
+  // All DB writes in a transaction — if any insert fails, everything rolls back
+  const card = await db.transaction(async (tx) => {
+    // Find or create player
+    let playerId: string | undefined;
+    if (input.playerName) {
+      const existing = await tx
+        .select()
+        .from(players)
+        .where(ilike(players.name, input.playerName))
+        .limit(1);
 
-    if (existing.length > 0) {
-      playerId = existing[0].id;
-      // Update team/position if provided and different
-      if (input.team || input.position) {
-        await db
-          .update(players)
-          .set({
-            ...(input.team ? { team: input.team } : {}),
-            ...(input.position ? { position: input.position } : {}),
-            updatedAt: new Date(),
+      if (existing.length > 0) {
+        playerId = existing[0].id;
+        if (input.team || input.position) {
+          await tx
+            .update(players)
+            .set({
+              ...(input.team ? { team: input.team } : {}),
+              ...(input.position ? { position: input.position } : {}),
+              updatedAt: new Date(),
+            })
+            .where(eq(players.id, playerId));
+        }
+      } else {
+        const [newPlayer] = await tx
+          .insert(players)
+          .values({
+            name: input.playerName,
+            team: input.team ?? null,
+            position: input.position ?? null,
           })
-          .where(eq(players.id, playerId));
+          .returning();
+        playerId = newPlayer.id;
       }
-    } else {
-      const [newPlayer] = await db
-        .insert(players)
-        .values({
-          name: input.playerName,
-          team: input.team ?? null,
-          position: input.position ?? null,
-        })
-        .returning();
-      playerId = newPlayer.id;
     }
-  }
 
-  // Find or create manufacturer
-  let manufacturerId: string | undefined;
-  if (input.manufacturer) {
-    const existing = await db
-      .select()
-      .from(manufacturers)
-      .where(ilike(manufacturers.name, input.manufacturer))
-      .limit(1);
+    // Find or create manufacturer
+    let manufacturerId: string | undefined;
+    if (input.manufacturer) {
+      const existing = await tx
+        .select()
+        .from(manufacturers)
+        .where(ilike(manufacturers.name, input.manufacturer))
+        .limit(1);
 
-    if (existing.length > 0) {
-      manufacturerId = existing[0].id;
-    } else {
-      const [newMfg] = await db
-        .insert(manufacturers)
-        .values({ name: input.manufacturer })
-        .returning();
-      manufacturerId = newMfg.id;
+      if (existing.length > 0) {
+        manufacturerId = existing[0].id;
+      } else {
+        const [newMfg] = await tx
+          .insert(manufacturers)
+          .values({ name: input.manufacturer })
+          .returning();
+        manufacturerId = newMfg.id;
+      }
     }
-  }
 
-  // Find or create set
-  let setId: string | undefined;
-  if (input.setName && input.year) {
-    const existing = await db
-      .select()
-      .from(sets)
-      .where(
-        and(ilike(sets.name, input.setName), eq(sets.year, input.year))
-      )
-      .limit(1);
+    // Find or create set
+    let setId: string | undefined;
+    if (input.setName && input.year) {
+      const existing = await tx
+        .select()
+        .from(sets)
+        .where(
+          and(ilike(sets.name, input.setName), eq(sets.year, input.year))
+        )
+        .limit(1);
 
-    if (existing.length > 0) {
-      setId = existing[0].id;
-    } else {
-      const [newSet] = await db
-        .insert(sets)
-        .values({
-          name: input.setName,
-          year: input.year,
-          manufacturerId: manufacturerId ?? null,
-        })
-        .returning();
-      setId = newSet.id;
+      if (existing.length > 0) {
+        setId = existing[0].id;
+      } else {
+        const [newSet] = await tx
+          .insert(sets)
+          .values({
+            name: input.setName,
+            year: input.year,
+            manufacturerId: manufacturerId ?? null,
+          })
+          .returning();
+        setId = newSet.id;
+      }
     }
-  }
 
-  // Create the card
-  const [card] = await db
-    .insert(cards)
-    .values({
-      playerId: playerId ?? null,
-      setId: setId ?? null,
-      cardNumber: input.cardNumber ?? null,
-      year: input.year ?? null,
-      parallelVariant: input.parallelVariant ?? null,
-      isRookieCard: input.isRookieCard ?? false,
-      condition: input.condition ?? null,
-      conditionNotes: input.conditionNotes ?? null,
-      graded: input.graded ?? false,
-      gradingCompany: input.gradingCompany ?? null,
-      grade: input.grade ?? null,
-      quantity: input.quantity ?? 1,
-      purchasePrice: input.purchasePrice ?? null,
-      purchaseCurrency: input.purchaseCurrency ?? "CAD",
-      purchaseDate: input.purchaseDate ? new Date(input.purchaseDate) : null,
-      purchaseSource: input.purchaseSource ?? null,
-      notes: input.notes ?? null,
-      aiRawResponse: input.aiRawResponse ?? null,
-      referenceCardId: input.referenceCardId ?? null,
-      subsetOrInsert: input.subsetOrInsert ?? null,
-      isAutograph: input.isAutograph ?? false,
-      isRelic: input.isRelic ?? false,
-      aiCorrected: input.aiCorrected ?? false,
-      status: "in_collection",
-    })
-    .returning();
+    // Create the card
+    const [newCard] = await tx
+      .insert(cards)
+      .values({
+        playerId: playerId ?? null,
+        setId: setId ?? null,
+        cardNumber: input.cardNumber ?? null,
+        year: input.year ?? null,
+        parallelVariant: input.parallelVariant ?? null,
+        isRookieCard: input.isRookieCard ?? false,
+        condition: input.condition ?? null,
+        conditionNotes: input.conditionNotes ?? null,
+        graded: input.graded ?? false,
+        gradingCompany: input.gradingCompany ?? null,
+        grade: input.grade ?? null,
+        quantity: input.quantity ?? 1,
+        purchasePrice: input.purchasePrice ?? null,
+        purchaseCurrency: input.purchaseCurrency ?? "CAD",
+        purchaseDate: input.purchaseDate ? new Date(input.purchaseDate) : null,
+        purchaseSource: input.purchaseSource ?? null,
+        notes: input.notes ?? null,
+        aiRawResponse: input.aiRawResponse ?? null,
+        referenceCardId: input.referenceCardId ?? null,
+        subsetOrInsert: input.subsetOrInsert ?? null,
+        isAutograph: input.isAutograph ?? false,
+        isRelic: input.isRelic ?? false,
+        aiCorrected: input.aiCorrected ?? false,
+        status: "in_collection",
+      })
+      .returning();
 
-  // Save front photo
-  if (input.photoUrl) {
-    await db.insert(cardPhotos).values({
-      cardId: card.id,
-      originalUrl: input.photoUrl,
-      photoType: "front",
-    });
-  }
+    // Save front photo
+    if (input.photoUrl) {
+      await tx.insert(cardPhotos).values({
+        cardId: newCard.id,
+        originalUrl: input.photoUrl,
+        photoType: "front",
+      });
+    }
 
-  // Save back photo
-  if (input.backPhotoUrl) {
-    await db.insert(cardPhotos).values({
-      cardId: card.id,
-      originalUrl: input.backPhotoUrl,
-      photoType: "back",
-    });
-  }
+    // Save back photo
+    if (input.backPhotoUrl) {
+      await tx.insert(cardPhotos).values({
+        cardId: newCard.id,
+        originalUrl: input.backPhotoUrl,
+        photoType: "back",
+      });
+    }
+
+    return newCard;
+  });
 
   revalidatePath("/cards");
   revalidatePath("/");
 
-  // Enqueue price lookup for the pricing engine (separate worker process)
+  // Enqueue price lookup outside transaction (separate concern)
   await enqueuePriceLookup(card.id, {
     playerName: input.playerName,
     year: input.year,

@@ -106,6 +106,8 @@ export default function ScanPage() {
   const [frontBlob, setFrontBlob] = useState<Blob | null>(null);
   const [backBlob, setBackBlob] = useState<Blob | null>(null);
   const [result, setResult] = useState<CardScanResponse | null>(null);
+  // Editable fields — initialized from AI result, user can correct before cataloguing
+  const [editedFields, setEditedFields] = useState<Record<string, string>>({});
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -236,6 +238,20 @@ export default function ScanPage() {
     if (response.success && response.data) {
       setResult(response.data);
       setProcessingTime(response.processingTimeMs ?? null);
+      // Initialize editable fields from AI result
+      const d = response.data;
+      setEditedFields({
+        player_name: d.player_name || "",
+        team: d.team || "",
+        year: String(d.year || ""),
+        card_number: d.card_number || "",
+        set_name: d.set_name || "",
+        manufacturer: d.manufacturer || "",
+        parallel_variant: d.parallel_variant || "",
+        serial_number: d.serial_number || "",
+        condition_estimate: d.condition_estimate || "",
+        centering_estimate: d.centering_estimate || "",
+      });
 
       // Crop from front image
       const frontDataUrl = frontPreview!;
@@ -272,17 +288,19 @@ export default function ScanPage() {
     setState("saving");
     try {
       const extResult = result as typeof result & { _aiCorrected?: boolean; _referenceCardId?: string; _subsetOrInsert?: string | null };
+      const e = editedFields;
+      const yearNum = parseInt(e.year) || result.year;
       const { id } = await createCard({
-        playerName: result.player_name,
-        team: result.team,
+        playerName: e.player_name || result.player_name,
+        team: e.team || result.team,
         position: result.position ?? undefined,
-        year: result.year,
-        setName: result.set_name,
-        manufacturer: result.manufacturer,
-        cardNumber: result.card_number,
-        parallelVariant: result.parallel_variant ?? undefined,
+        year: yearNum,
+        setName: e.set_name || result.set_name,
+        manufacturer: e.manufacturer || result.manufacturer,
+        cardNumber: e.card_number || result.card_number,
+        parallelVariant: e.parallel_variant || (result.parallel_variant ?? undefined),
         isRookieCard: result.is_rookie_card,
-        condition: result.condition_estimate,
+        condition: e.condition_estimate || result.condition_estimate,
         conditionNotes: result.condition_notes,
         graded: result.graded,
         gradingCompany: result.grading_company ?? undefined,
@@ -293,7 +311,7 @@ export default function ScanPage() {
         isAutograph: result.is_autograph,
         subsetOrInsert: extResult._subsetOrInsert ?? result.subset_or_insert ?? undefined,
         referenceCardId: extResult._referenceCardId,
-        aiCorrected: extResult._aiCorrected,
+        aiCorrected: extResult._aiCorrected || Object.keys(editedFields).some(k => editedFields[k] !== String((result as unknown as Record<string, unknown>)[k] ?? "")),
       });
       router.push(`/cards/${id}`);
     } catch {
@@ -311,6 +329,7 @@ export default function ScanPage() {
     setFrontBlob(null);
     setBackBlob(null);
     setResult(null);
+    setEditedFields({});
     setError(null);
     setProcessingTime(null);
     setCaptureTarget("front");
@@ -479,18 +498,18 @@ export default function ScanPage() {
                 </div>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Field label="Player" value={result.player_name} />
-                <Field label="Team" value={result.team} />
+                <Field label="Player" value={editedFields.player_name ?? result.player_name} onChange={(v) => setEditedFields(f => ({ ...f, player_name: v }))} />
+                <Field label="Team" value={editedFields.team ?? result.team} onChange={(v) => setEditedFields(f => ({ ...f, team: v }))} />
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Year" value={String(result.year)} />
-                  <Field label="Card #" value={result.card_number} />
+                  <Field label="Year" value={editedFields.year ?? String(result.year)} onChange={(v) => setEditedFields(f => ({ ...f, year: v }))} />
+                  <Field label="Card #" value={editedFields.card_number ?? result.card_number} onChange={(v) => setEditedFields(f => ({ ...f, card_number: v }))} />
                 </div>
-                <Field label="Set" value={result.set_name} />
-                <Field label="Manufacturer" value={result.manufacturer} />
-                {result.parallel_variant && <Field label="Parallel" value={result.parallel_variant} highlight />}
-                {result.serial_number && <Field label="Serial" value={result.serial_number} highlight />}
-                <Field label="Condition" value={result.condition_estimate} />
-                {result.centering_estimate && <Field label="Centering" value={result.centering_estimate} mono />}
+                <Field label="Set" value={editedFields.set_name ?? result.set_name} onChange={(v) => setEditedFields(f => ({ ...f, set_name: v }))} />
+                <Field label="Manufacturer" value={editedFields.manufacturer ?? result.manufacturer} onChange={(v) => setEditedFields(f => ({ ...f, manufacturer: v }))} />
+                {(editedFields.parallel_variant || result.parallel_variant) && <Field label="Parallel" value={editedFields.parallel_variant ?? result.parallel_variant ?? ""} highlight onChange={(v) => setEditedFields(f => ({ ...f, parallel_variant: v }))} />}
+                {(editedFields.serial_number || result.serial_number) && <Field label="Serial" value={editedFields.serial_number ?? result.serial_number ?? ""} highlight onChange={(v) => setEditedFields(f => ({ ...f, serial_number: v }))} />}
+                <Field label="Condition" value={editedFields.condition_estimate ?? result.condition_estimate} onChange={(v) => setEditedFields(f => ({ ...f, condition_estimate: v }))} />
+                {(editedFields.centering_estimate || result.centering_estimate) && <Field label="Centering" value={editedFields.centering_estimate ?? result.centering_estimate ?? ""} mono onChange={(v) => setEditedFields(f => ({ ...f, centering_estimate: v }))} />}
 
                 <div className="flex flex-wrap gap-1.5 pt-2">
                   {result.is_rookie_card && <Badge variant="default">RC</Badge>}
@@ -535,11 +554,17 @@ export default function ScanPage() {
   );
 }
 
-function Field({ label, value, highlight, mono }: { label: string; value: string; highlight?: boolean; mono?: boolean }) {
+function Field({ label, value, highlight, mono, onChange }: { label: string; value: string; highlight?: boolean; mono?: boolean; onChange?: (v: string) => void }) {
   return (
     <div>
       <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">{label}</label>
-      <Input defaultValue={value} className={highlight ? "border-[var(--color-burg-border)]" : ""} style={{ ...(mono ? { fontFamily: "var(--font-mono)" } : {}), ...(highlight ? { color: "var(--color-burg-light)" } : {}) }} />
+      <Input
+        value={value}
+        onChange={onChange ? (e) => onChange(e.target.value) : undefined}
+        readOnly={!onChange}
+        className={highlight ? "border-[var(--color-burg-border)]" : ""}
+        style={{ ...(mono ? { fontFamily: "var(--font-mono)" } : {}), ...(highlight ? { color: "var(--color-burg-light)" } : {}) }}
+      />
     </div>
   );
 }

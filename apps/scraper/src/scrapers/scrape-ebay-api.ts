@@ -64,7 +64,7 @@ export async function scrapeEbayApi(query: string): Promise<{
       q: query,
       category_ids: "213",
       limit: "20",
-      sort: "-price",
+      sort: "BEST_MATCH",
     });
 
     const res = await fetch(
