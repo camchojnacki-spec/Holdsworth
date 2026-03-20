@@ -2,17 +2,19 @@ import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { CardFilters } from "@/components/cards/card-filters";
 import { CardGridItem } from "@/components/cards/card-grid-item";
-import { Plus, ScanLine, Library } from "lucide-react";
+import { Plus, ScanLine, Library, ChevronLeft, ChevronRight } from "lucide-react";
 import { Suspense } from "react";
 import { getCards } from "@/actions/cards";
 
 export default async function CardsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ search?: string; year?: string; status?: string }>;
+  searchParams: Promise<{ search?: string; year?: string; status?: string; sortBy?: string; page?: string }>;
 }) {
   const params = await searchParams;
-  const cards = await getCards(params);
+  const page = parseInt(params.page ?? "1") || 1;
+  const { cards, totalCount, pageSize } = await getCards({ ...params, page });
+  const totalPages = Math.ceil(totalCount / pageSize);
 
   return (
     <div className="space-y-6">
@@ -22,7 +24,7 @@ export default async function CardsPage({
             Binder
           </h1>
           <p style={{ fontFamily: "var(--font-mono)" }} className="text-xs tracking-wider uppercase text-muted-foreground mt-1">
-            {cards.length} cards in binder
+            {totalCount} cards in binder
           </p>
         </div>
         <div className="flex gap-2">
@@ -46,11 +48,36 @@ export default async function CardsPage({
       </Suspense>
 
       {cards.length > 0 ? (
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
-          {cards.map((card) => (
-            <CardGridItem key={card.id} card={card} />
-          ))}
-        </div>
+        <>
+          <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 xl:grid-cols-6 gap-4">
+            {cards.map((card) => (
+              <CardGridItem key={card.id} card={card} />
+            ))}
+          </div>
+
+          {/* Pagination */}
+          {totalPages > 1 && (
+            <div className="flex items-center justify-center gap-2 pt-4">
+              {page > 1 ? (
+                <Link href={{ query: { ...params, page: String(page - 1) } }}>
+                  <Button variant="outline" size="sm"><ChevronLeft className="h-4 w-4" /></Button>
+                </Link>
+              ) : (
+                <Button variant="outline" size="sm" disabled><ChevronLeft className="h-4 w-4" /></Button>
+              )}
+              <span style={{ fontFamily: "var(--font-mono)" }} className="text-xs tracking-wider text-muted-foreground px-3">
+                {page} / {totalPages}
+              </span>
+              {page < totalPages ? (
+                <Link href={{ query: { ...params, page: String(page + 1) } }}>
+                  <Button variant="outline" size="sm"><ChevronRight className="h-4 w-4" /></Button>
+                </Link>
+              ) : (
+                <Button variant="outline" size="sm" disabled><ChevronRight className="h-4 w-4" /></Button>
+              )}
+            </div>
+          )}
+        </>
       ) : (
         <div className="flex flex-col items-center justify-center py-20 text-muted-foreground">
           <Library className="h-16 w-16 mb-4 opacity-20" />

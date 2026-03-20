@@ -112,6 +112,27 @@ export async function handlePriceLookup(
     estimateUsd = aiResult?.mid ?? Math.round(median * 100) / 100;
     const estimateCad = Math.round(estimateUsd * usdToCad * 100) / 100;
 
+    // Calculate trend by comparing with previous estimate
+    let priceTrend = "stable";
+    let trendPct = "0";
+    const [prevEstimate] = await db
+      .select({ usd: priceEstimates.estimatedValueUsd })
+      .from(priceEstimates)
+      .where(eq(priceEstimates.cardId, cardId))
+      .limit(1);
+    if (prevEstimate?.usd) {
+      const prevUsd = parseFloat(prevEstimate.usd);
+      if (prevUsd > 0) {
+        const pctChange = ((estimateUsd - prevUsd) / prevUsd) * 100;
+        trendPct = String(Math.round(pctChange));
+        if (pctChange >= 5) priceTrend = "up";
+        else if (pctChange <= -5) priceTrend = "down";
+      }
+    }
+
+    const confidence = soldFiltered.length >= 5 ? "high" : soldFiltered.length >= 2 ? "medium" : "low";
+    const sampleSize = soldFiltered.length || allFiltered.length;
+
     // Upsert price estimate
     await db
       .insert(priceEstimates)
@@ -119,17 +140,20 @@ export async function handlePriceLookup(
         cardId,
         estimatedValueUsd: String(estimateUsd),
         estimatedValueCad: String(estimateCad),
-        confidence: soldFiltered.length >= 5 ? "high" : soldFiltered.length >= 2 ? "medium" : "low",
-        sampleSize: soldFiltered.length || allFiltered.length,
-        priceTrend: "stable",
+        confidence,
+        sampleSize,
+        priceTrend,
+        trendPercentage: trendPct,
       })
       .onConflictDoUpdate({
         target: priceEstimates.cardId,
         set: {
           estimatedValueUsd: String(estimateUsd),
           estimatedValueCad: String(estimateCad),
-          confidence: soldFiltered.length >= 5 ? "high" : soldFiltered.length >= 2 ? "medium" : "low",
-          sampleSize: soldFiltered.length || allFiltered.length,
+          confidence,
+          sampleSize,
+          priceTrend,
+          trendPercentage: trendPct,
           lastUpdated: new Date(),
         },
       });

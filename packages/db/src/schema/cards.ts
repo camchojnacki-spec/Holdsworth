@@ -43,6 +43,12 @@ export const cards = pgTable(
     status: varchar("status", { length: 50 }).default("in_collection").notNull(),
     notes: text("notes"),
 
+    // Sale tracking (when status = "sold")
+    salePrice: numeric("sale_price", { precision: 10, scale: 2 }),
+    saleCurrency: varchar("sale_currency", { length: 3 }),
+    saleDate: timestamp("sale_date"),
+    salePlatform: varchar("sale_platform", { length: 100 }),
+
     // Reference matching
     referenceCardId: uuid("reference_card_id").references(() => referenceCards.id),
     subsetOrInsert: varchar("subset_or_insert", { length: 255 }),

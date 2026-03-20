@@ -3,7 +3,7 @@ import { notFound } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Pencil } from "lucide-react";
 import { getCardById } from "@/actions/cards";
 import { DeleteCardButton } from "@/components/cards/delete-card-button";
 import { CardComps } from "@/components/cards/card-comps";
@@ -37,7 +37,14 @@ export default async function CardDetailPage({
             </p>
           </div>
         </div>
-        <DeleteCardButton cardId={card.id} />
+        <div className="flex items-center gap-2">
+          <Link href={`/cards/${card.id}/edit`}>
+            <Button variant="outline" size="sm" className="gap-1.5">
+              <Pencil className="h-3.5 w-3.5" />Edit
+            </Button>
+          </Link>
+          <DeleteCardButton cardId={card.id} />
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-2">

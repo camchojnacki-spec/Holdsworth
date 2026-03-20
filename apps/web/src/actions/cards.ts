@@ -219,6 +219,104 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
   return { id: card.id };
 }
 
+// ── Update ──
+
+export interface UpdateCardInput {
+  playerName?: string;
+  team?: string;
+  year?: number;
+  setName?: string;
+  manufacturer?: string;
+  cardNumber?: string;
+  parallelVariant?: string;
+  isRookieCard?: boolean;
+  condition?: string;
+  conditionNotes?: string;
+  graded?: boolean;
+  gradingCompany?: string;
+  grade?: string;
+  purchasePrice?: string;
+  purchaseCurrency?: string;
+  purchaseDate?: string;
+  purchaseSource?: string;
+  notes?: string;
+  isAutograph?: boolean;
+  subsetOrInsert?: string;
+  status?: string;
+}
+
+export async function updateCard(cardId: string, input: UpdateCardInput): Promise<{ success: boolean }> {
+  await db.transaction(async (tx) => {
+    // Update player if name changed
+    if (input.playerName) {
+      const [card] = await tx.select({ playerId: cards.playerId }).from(cards).where(eq(cards.id, cardId)).limit(1);
+      if (card?.playerId) {
+        await tx.update(players).set({ name: input.playerName, ...(input.team ? { team: input.team } : {}), updatedAt: new Date() }).where(eq(players.id, card.playerId));
+      } else {
+        // Create new player
+        const [newPlayer] = await tx.insert(players).values({ name: input.playerName, team: input.team ?? null }).returning();
+        await tx.update(cards).set({ playerId: newPlayer.id }).where(eq(cards.id, cardId));
+      }
+    }
+
+    // Update manufacturer if changed
+    if (input.manufacturer) {
+      const existing = await tx.select().from(manufacturers).where(ilike(manufacturers.name, input.manufacturer)).limit(1);
+      let mfgId: string;
+      if (existing.length > 0) {
+        mfgId = existing[0].id;
+      } else {
+        const [newMfg] = await tx.insert(manufacturers).values({ name: input.manufacturer }).returning();
+        mfgId = newMfg.id;
+      }
+      // Update set's manufacturer
+      const [card] = await tx.select({ setId: cards.setId }).from(cards).where(eq(cards.id, cardId)).limit(1);
+      if (card?.setId) {
+        await tx.update(sets).set({ manufacturerId: mfgId }).where(eq(sets.id, card.setId));
+      }
+    }
+
+    // Update set if changed
+    if (input.setName && input.year) {
+      const existing = await tx.select().from(sets).where(and(ilike(sets.name, input.setName), eq(sets.year, input.year))).limit(1);
+      let setId: string;
+      if (existing.length > 0) {
+        setId = existing[0].id;
+      } else {
+        const [newSet] = await tx.insert(sets).values({ name: input.setName, year: input.year }).returning();
+        setId = newSet.id;
+      }
+      await tx.update(cards).set({ setId }).where(eq(cards.id, cardId));
+    }
+
+    // Update card fields
+    await tx.update(cards).set({
+      ...(input.cardNumber !== undefined ? { cardNumber: input.cardNumber || null } : {}),
+      ...(input.year !== undefined ? { year: input.year } : {}),
+      ...(input.parallelVariant !== undefined ? { parallelVariant: input.parallelVariant || null } : {}),
+      ...(input.isRookieCard !== undefined ? { isRookieCard: input.isRookieCard } : {}),
+      ...(input.condition !== undefined ? { condition: input.condition || null } : {}),
+      ...(input.conditionNotes !== undefined ? { conditionNotes: input.conditionNotes || null } : {}),
+      ...(input.graded !== undefined ? { graded: input.graded } : {}),
+      ...(input.gradingCompany !== undefined ? { gradingCompany: input.gradingCompany || null } : {}),
+      ...(input.grade !== undefined ? { grade: input.grade || null } : {}),
+      ...(input.purchasePrice !== undefined ? { purchasePrice: input.purchasePrice || null } : {}),
+      ...(input.purchaseCurrency !== undefined ? { purchaseCurrency: input.purchaseCurrency || "CAD" } : {}),
+      ...(input.purchaseDate !== undefined ? { purchaseDate: input.purchaseDate ? new Date(input.purchaseDate) : null } : {}),
+      ...(input.purchaseSource !== undefined ? { purchaseSource: input.purchaseSource || null } : {}),
+      ...(input.notes !== undefined ? { notes: input.notes || null } : {}),
+      ...(input.isAutograph !== undefined ? { isAutograph: input.isAutograph } : {}),
+      ...(input.subsetOrInsert !== undefined ? { subsetOrInsert: input.subsetOrInsert || null } : {}),
+      ...(input.status !== undefined ? { status: input.status } : {}),
+      updatedAt: new Date(),
+    }).where(eq(cards.id, cardId));
+  });
+
+  revalidatePath(`/cards/${cardId}`);
+  revalidatePath("/cards");
+  return { success: true };
+}
+
 /**
  * Get the pricing job status for a card.
  * Used by the frontend to show real engine status instead of blind polling.
@@ -308,11 +406,15 @@ export async function rescoutCard(cardId: string) {
 
 // ── Read ──
 
+const PAGE_SIZE = 30;
+
 export async function getCards(filters?: {
   search?: string;
   year?: string;
   status?: string;
-}): Promise<CardWithDetails[]> {
+  sortBy?: string;
+  page?: number;
+}): Promise<{ cards: CardWithDetails[]; totalCount: number; page: number; pageSize: number }> {
   const conditions = [];
 
   if (filters?.status) {
@@ -324,6 +426,40 @@ export async function getCards(filters?: {
       conditions.push(eq(cards.year, yearNum));
     }
   }
+  // Server-side search via SQL ilike
+  if (filters?.search) {
+    const term = `%${filters.search}%`;
+    conditions.push(
+      or(
+        ilike(players.name, term),
+        ilike(sets.name, term),
+        ilike(cards.cardNumber, term)
+      )
+    );
+  }
+
+  const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+
+  // Sort order
+  let orderClause;
+  switch (filters?.sortBy) {
+    case "name": orderClause = players.name; break;
+    case "year": orderClause = desc(cards.year); break;
+    case "value": orderClause = desc(priceEstimates.estimatedValueUsd); break;
+    default: orderClause = desc(cards.createdAt);
+  }
+
+  const page = Math.max(1, filters?.page ?? 1);
+  const offset = (page - 1) * PAGE_SIZE;
+
+  // Get total count for pagination
+  const [countResult] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(cards)
+    .leftJoin(players, eq(cards.playerId, players.id))
+    .leftJoin(sets, eq(cards.setId, sets.id))
+    .where(whereClause);
+  const totalCount = countResult?.count ?? 0;
 
   const rows = await db
     .select({
@@ -366,23 +502,17 @@ export async function getCards(filters?: {
       and(eq(cardPhotos.cardId, cards.id), eq(cardPhotos.photoType, "front"))
     )
     .leftJoin(priceEstimates, eq(priceEstimates.cardId, cards.id))
-    .where(conditions.length > 0 ? and(...conditions) : undefined)
-    .orderBy(desc(cards.createdAt));
+    .where(whereClause)
+    .orderBy(orderClause)
+    .limit(PAGE_SIZE)
+    .offset(offset);
 
-  let results = rows as CardWithDetails[];
-
-  // Client-side search filter (searches player name, set name, card number)
-  if (filters?.search) {
-    const term = filters.search.toLowerCase();
-    results = results.filter(
-      (c) =>
-        c.playerName?.toLowerCase().includes(term) ||
-        c.setName?.toLowerCase().includes(term) ||
-        c.cardNumber?.toLowerCase().includes(term)
-    );
-  }
-
-  return results;
+  return {
+    cards: rows as CardWithDetails[],
+    totalCount,
+    page,
+    pageSize: PAGE_SIZE,
+  };
 }
 
 export async function getCardById(id: string): Promise<CardWithDetails | null> {
