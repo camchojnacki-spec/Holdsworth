@@ -4,7 +4,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, SlidersHorizontal, X } from "lucide-react";
+import { Search, X, Download, ArrowUpDown } from "lucide-react";
 
 export function CardFilters() {
   const router = useRouter();
@@ -13,6 +13,7 @@ export function CardFilters() {
   const search = searchParams.get("search") || "";
   const year = searchParams.get("year") || "";
   const status = searchParams.get("status") || "";
+  const sortBy = searchParams.get("sortBy") || "";
 
   const updateFilter = useCallback(
     (key: string, value: string) => {
@@ -22,6 +23,8 @@ export function CardFilters() {
       } else {
         params.delete(key);
       }
+      // Reset to page 1 when filters change
+      params.delete("page");
       router.push(`/cards?${params.toString()}`);
     },
     [router, searchParams]
@@ -29,6 +32,11 @@ export function CardFilters() {
 
   const clearFilters = () => {
     router.push("/cards");
+  };
+
+  const handleExport = () => {
+    const params = new URLSearchParams(searchParams.toString());
+    window.open(`/api/export?${params.toString()}`, "_blank");
   };
 
   const hasFilters = search || year || status;
@@ -67,6 +75,29 @@ export function CardFilters() {
         <option value="sold">Sold</option>
         <option value="traded">Traded</option>
       </select>
+
+      {/* Sort */}
+      <select
+        value={sortBy}
+        onChange={(e) => updateFilter("sortBy", e.target.value)}
+        className="h-9 rounded-md border border-input bg-transparent px-3 text-sm"
+      >
+        <option value="">Newest</option>
+        <option value="name">Player A–Z</option>
+        <option value="year">Year ↓</option>
+        <option value="value">Value ↓</option>
+      </select>
+
+      {/* Export */}
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={handleExport}
+        className="gap-1 text-muted-foreground hover:text-white"
+        title="Export to CSV"
+      >
+        <Download className="h-3.5 w-3.5" />
+      </Button>
 
       {hasFilters && (
         <Button variant="ghost" size="sm" onClick={clearFilters} className="gap-1">

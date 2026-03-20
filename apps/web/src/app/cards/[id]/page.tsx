@@ -8,6 +8,7 @@ import { getCardById } from "@/actions/cards";
 import { DeleteCardButton } from "@/components/cards/delete-card-button";
 import { CardComps } from "@/components/cards/card-comps";
 import { CardGrade } from "@/components/cards/card-grade";
+import { CardTags } from "@/components/cards/card-tags";
 
 export default async function CardDetailPage({
   params,
@@ -94,6 +95,10 @@ export default async function CardDetailPage({
                 {card.isAutograph && <Badge variant="default">Auto</Badge>}
                 {card.graded && <Badge variant="secondary">{card.gradingCompany} {card.grade}</Badge>}
                 {card.aiCorrected && <Badge variant="secondary">Confirmed</Badge>}
+              </div>
+
+              <div className="pt-2">
+                <CardTags cardId={card.id} />
               </div>
             </CardContent>
           </Card>

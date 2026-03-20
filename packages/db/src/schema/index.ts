@@ -11,3 +11,4 @@ export { alerts } from "./alerts";
 export { scanSessions } from "./scan-sessions";
 export { currencyRates } from "./currency";
 export { userSettings } from "./settings";
+export { tags, cardTags } from "./tags";

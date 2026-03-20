@@ -19,7 +19,7 @@ const navigation = [
   { name: "Home", href: "/", icon: LayoutDashboard },
   { name: "Binder", href: "/cards", icon: Library },
   { name: "Pull", href: "/scan", icon: ScanLine },
-  { name: "Comps", href: "/prices", icon: DollarSign },
+  { name: "Portfolio", href: "/prices", icon: DollarSign },
   { name: "Wax Alerts", href: "/prices/alerts", icon: Bell },
   { name: "Vendors", href: "/vendors", icon: Store },
   { name: "Deals", href: "/vendors/deals", icon: ShoppingCart },
