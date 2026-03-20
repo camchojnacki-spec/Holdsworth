@@ -1,6 +1,17 @@
 import { GoogleGenAI } from "@google/genai";
 import { CARD_SCAN_SYSTEM_PROMPT, CARD_SCAN_USER_PROMPT } from "./prompts";
 
+// Singleton Gemini client — avoids creating a new instance per call
+let _geminiClient: GoogleGenAI | null = null;
+export function getGemini(): GoogleGenAI {
+  if (!_geminiClient) {
+    const apiKey = process.env.GOOGLE_AI_API_KEY;
+    if (!apiKey) throw new Error("GOOGLE_AI_API_KEY environment variable is not set");
+    _geminiClient = new GoogleGenAI({ apiKey });
+  }
+  return _geminiClient;
+}
+
 export interface CardScanResponse {
   player_name: string;
   team: string;
@@ -36,12 +47,7 @@ export async function scanCardWithGemini(
   backImageBase64?: string,
   backMimeType?: string,
 ): Promise<CardScanResponse> {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) {
-    throw new Error("GOOGLE_AI_API_KEY environment variable is not set");
-  }
-
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGemini();
 
   const parts: Array<{ text: string } | { inlineData: { mimeType: string; data: string } }> = [];
 
@@ -73,18 +79,24 @@ export async function scanCardWithGemini(
     config: {
       temperature: 0.1,
       maxOutputTokens: 4096,
+      responseMimeType: "application/json",
     },
   });
 
   const text = response.text ?? "";
 
-  // Parse JSON from the response — handle potential markdown fencing
-  const jsonMatch = text.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) {
-    throw new Error("Failed to extract JSON from AI response");
+  // With responseMimeType: "application/json", Gemini returns clean JSON
+  // but keep regex fallback for safety
+  let jsonStr = text;
+  if (!text.startsWith("{")) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("Failed to extract JSON from AI response");
+    }
+    jsonStr = jsonMatch[0];
   }
 
-  const parsed: CardScanResponse = JSON.parse(jsonMatch[0]);
+  const parsed: CardScanResponse = JSON.parse(jsonStr);
   return parsed;
 }
 
@@ -104,10 +116,12 @@ export async function detectCardBounds(
   imageBase64: string,
   mimeType: string
 ): Promise<CardCropRegion | null> {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) return null;
-
-  const ai = new GoogleGenAI({ apiKey });
+  let ai: GoogleGenAI;
+  try {
+    ai = getGemini();
+  } catch {
+    return null;
+  }
 
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",

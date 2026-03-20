@@ -1,6 +1,7 @@
 "use server";
 
 import { db, userSettings } from "@holdsworth/db";
+import { settingsSchema } from "@/lib/validators";
 
 export interface SettingsData {
   province: string;
@@ -21,7 +22,11 @@ export async function getSettings(): Promise<SettingsData> {
   return { province: "ON", updateFrequency: "weekly", alertThreshold: 10 };
 }
 
-export async function saveSettings(data: SettingsData): Promise<{ success: boolean }> {
+export async function saveSettings(data: SettingsData): Promise<{ success: boolean; error?: string }> {
+  const parsed = settingsSchema.safeParse(data);
+  if (!parsed.success) {
+    return { success: false, error: parsed.error.issues.map(i => i.message).join(", ") };
+  }
   const rows = await db.select().from(userSettings).limit(1);
   if (rows.length > 0) {
     await db.update(userSettings).set({

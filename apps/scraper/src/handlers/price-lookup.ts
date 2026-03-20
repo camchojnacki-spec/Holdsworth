@@ -33,7 +33,8 @@ export async function handlePriceLookup(
   const primaryQuery = queries[0];
   const allListings: SoldListing[] = [];
   const sources: string[] = [];
-  const usdToCad = 1.38;
+  const { getUsdToCad } = await import("./currency-update");
+  const usdToCad = await getUsdToCad();
 
   // ── Scrape 130point (sold data) ──
   for (const query of queries.slice(0, 2)) {

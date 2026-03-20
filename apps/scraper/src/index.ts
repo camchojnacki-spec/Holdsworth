@@ -25,8 +25,9 @@ try {
   console.log("No .env.local found, using environment variables");
 }
 
-// Now import worker (which imports @holdsworth/db which reads DATABASE_URL)
+// Now import worker and currency handler (which imports @holdsworth/db which reads DATABASE_URL)
 const { startWorker, stopWorker } = await import("./worker");
+const { updateCurrencyRates } = await import("./handlers/currency-update");
 
 // Graceful shutdown
 process.on("SIGINT", () => {
@@ -45,6 +46,10 @@ console.log("╔═════════════════════�
 console.log("║   Holdsworth Pricing Engine v0.1     ║");
 console.log("╚══════════════════════════════════════╝");
 console.log("");
+
+// Fetch latest currency rate on startup, then daily
+updateCurrencyRates().catch(() => {});
+setInterval(() => updateCurrencyRates().catch(() => {}), 24 * 60 * 60 * 1000);
 
 startWorker().catch((err) => {
   console.error("Fatal error:", err);

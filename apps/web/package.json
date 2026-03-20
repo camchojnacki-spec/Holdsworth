@@ -10,6 +10,7 @@
     "lint": "next lint"
   },
   "dependencies": {
+    "@google-cloud/storage": "^7.19.0",
     "@google/genai": "^1.45.0",
     "@holdsworth/db": "workspace:*",
     "@radix-ui/react-dialog": "^1.1.0",
@@ -30,7 +31,8 @@
     "postgres": "^3.4.8",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
-    "tailwind-merge": "^2.6.0"
+    "tailwind-merge": "^2.6.0",
+    "zod": "^4.3.6"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.0",

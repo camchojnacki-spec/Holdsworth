@@ -4,6 +4,8 @@ import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, pr
 import { eq, desc, ilike, and, sql, or } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { CardWithDetails } from "@/types/cards";
+import { uploadCardPhoto } from "@/lib/gcs";
+import { createCardSchema } from "@/lib/validators";
 
 // ── Create ──
 
@@ -39,6 +41,12 @@ export interface CreateCardInput {
 }
 
 export async function createCard(input: CreateCardInput): Promise<{ id: string }> {
+  // Validate input
+  const parsed = createCardSchema.safeParse(input);
+  if (!parsed.success) {
+    throw new Error(`Invalid card data: ${parsed.error.issues.map(i => i.message).join(", ")}`);
+  }
+
   // All DB writes in a transaction — if any insert fails, everything rolls back
   const card = await db.transaction(async (tx) => {
     // Find or create player
@@ -152,20 +160,37 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
       })
       .returning();
 
-    // Save front photo
+    // Upload photos to GCS and save URLs
     if (input.photoUrl) {
+      let photoUrl = input.photoUrl;
+      if (input.photoUrl.startsWith("data:")) {
+        try {
+          const { url } = await uploadCardPhoto(input.photoUrl, newCard.id, "front");
+          photoUrl = url;
+        } catch (err) {
+          console.error("[createCard] GCS upload failed for front photo, storing data URL:", err);
+        }
+      }
       await tx.insert(cardPhotos).values({
         cardId: newCard.id,
-        originalUrl: input.photoUrl,
+        originalUrl: photoUrl,
         photoType: "front",
       });
     }
 
-    // Save back photo
     if (input.backPhotoUrl) {
+      let backUrl = input.backPhotoUrl;
+      if (input.backPhotoUrl.startsWith("data:")) {
+        try {
+          const { url } = await uploadCardPhoto(input.backPhotoUrl, newCard.id, "back");
+          backUrl = url;
+        } catch (err) {
+          console.error("[createCard] GCS upload failed for back photo, storing data URL:", err);
+        }
+      }
       await tx.insert(cardPhotos).values({
         cardId: newCard.id,
-        originalUrl: input.backPhotoUrl,
+        originalUrl: backUrl,
         photoType: "back",
       });
     }

@@ -1,6 +1,5 @@
 "use server";
 
-import { GoogleGenAI } from "@google/genai";
 import { db, cards, cardPhotos } from "@holdsworth/db";
 import { eq, and } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
@@ -208,8 +207,8 @@ Return ONLY valid JSON matching this exact schema (no markdown fences):
 }`;
 
 export async function gradeCard(cardId: string): Promise<GradeReport | null> {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) throw new Error("GOOGLE_AI_API_KEY not set");
+  // Import singleton Gemini client
+  const { getGemini } = await import("@/lib/ai/gemini");
 
   // Get card photos — try cardPhotos table first, then fall back to cards table
   const photos = await db
@@ -264,7 +263,7 @@ export async function gradeCard(cardId: string): Promise<GradeReport | null> {
     }
   }
 
-  const ai = new GoogleGenAI({ apiKey });
+  const ai = getGemini();
   const response = await ai.models.generateContent({
     model: "gemini-2.5-flash",
     contents: [{ role: "user", parts }],
