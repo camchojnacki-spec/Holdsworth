@@ -1,5 +1,7 @@
 import { GoogleGenAI } from "@google/genai";
-import { CARD_SCAN_SYSTEM_PROMPT, CARD_SCAN_USER_PROMPT } from "./prompts";
+import { CARD_SCAN_SYSTEM_PROMPT, CARD_SCAN_USER_PROMPT, EXPERT_PERSONA_PROMPT } from "./prompts";
+import type { ReferenceMatch } from "./reference-matcher";
+import type { CardTextExtraction } from "./text-extraction";
 
 // Singleton Gemini client — avoids creating a new instance per call
 let _geminiClient: GoogleGenAI | null = null;
@@ -56,7 +58,7 @@ export async function scanCardWithGemini(
     ? "\n\nTwo images are provided: the FRONT of the card (first image) and the BACK of the card (second image). Use both to maximize identification accuracy. The back contains the card number, copyright year, player stats, and sometimes serial numbering."
     : "";
 
-  parts.push({ text: CARD_SCAN_SYSTEM_PROMPT + promptSuffix + "\n\n" + CARD_SCAN_USER_PROMPT });
+  parts.push({ text: EXPERT_PERSONA_PROMPT + "\n\n" + CARD_SCAN_SYSTEM_PROMPT + promptSuffix + "\n\n" + CARD_SCAN_USER_PROMPT });
   parts.push({
     inlineData: {
       mimeType: mimeType as "image/jpeg" | "image/png" | "image/webp",
@@ -217,5 +219,235 @@ export async function detectCardBounds(
   } catch (err) {
     console.log("[detectCardBounds] Parse error:", err);
     return null;
+  }
+}
+
+// ── Stage 3: Identify with Candidates (constrained visual identification) ──
+
+/**
+ * Given pre-extracted text and a list of reference DB candidates,
+ * ask Gemini to pick the correct match from a constrained set.
+ * Much cheaper and more accurate than full identification from scratch.
+ */
+export async function identifyWithCandidates(
+  frontBase64: string,
+  frontMimeType: string,
+  candidates: ReferenceMatch[],
+  textExtraction: CardTextExtraction,
+  backBase64?: string,
+  backMimeType?: string
+): Promise<CardScanResponse> {
+  const ai = getGemini();
+
+  const candidateList = candidates
+    .map(
+      (c, i) =>
+        `${i + 1}. ${c.productName}${c.subsetName ? ` — ${c.subsetName}` : ""} (ref: ${c.referenceCardId})`
+    )
+    .join("\n");
+
+  const textSummary = [
+    textExtraction.cardNumber ? `Card number: ${textExtraction.cardNumber}` : null,
+    textExtraction.copyrightYear ? `Copyright year: ${textExtraction.copyrightYear}` : null,
+    textExtraction.playerNameAsWritten ? `Player name: ${textExtraction.playerNameAsWritten}` : null,
+    textExtraction.manufacturerText ? `Manufacturer: ${textExtraction.manufacturerText}` : null,
+    textExtraction.serialNumber ? `Serial number: ${textExtraction.serialNumber}` : null,
+    textExtraction.otherText.length > 0 ? `Other text: ${textExtraction.otherText.join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const candidatePrompt = `${EXPERT_PERSONA_PROMPT}
+
+${CARD_SCAN_SYSTEM_PROMPT}
+
+## PRE-EXTRACTED TEXT (already read from this card)
+${textSummary}
+
+## REFERENCE DATABASE CANDIDATES
+The following cards match the extracted card number and year in our database:
+${candidateList}
+
+INSTRUCTIONS: Based on the visual evidence in the image AND the extracted text above, determine which candidate is the correct match. If NONE of the candidates match, identify the card from scratch. Your confidence should be 0.90+ if a candidate matches, or <0.70 if you must identify from scratch.
+
+${CARD_SCAN_USER_PROMPT}`;
+
+  const imageSuffix = backBase64
+    ? "\n\nTwo images: FRONT (first) and BACK (second)."
+    : "";
+
+  const parts: Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > = [];
+  parts.push({ text: candidatePrompt + imageSuffix });
+  parts.push({
+    inlineData: {
+      mimeType: frontMimeType as "image/jpeg" | "image/png" | "image/webp",
+      data: frontBase64,
+    },
+  });
+
+  if (backBase64 && backMimeType) {
+    parts.push({
+      inlineData: {
+        mimeType: backMimeType as "image/jpeg" | "image/png" | "image/webp",
+        data: backBase64,
+      },
+    });
+  }
+
+  console.log("[identify-with-candidates] Sending constrained identification with", candidates.length, "candidates");
+  const startTime = Date.now();
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts }],
+    config: {
+      temperature: 0.1,
+      maxOutputTokens: 4096,
+      responseMimeType: "application/json",
+    },
+  });
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[identify-with-candidates] Completed in ${elapsed}ms`);
+
+  const text = response.text ?? "";
+  let jsonStr = text;
+  if (!text.startsWith("{")) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      throw new Error("Failed to extract JSON from candidate identification response");
+    }
+    jsonStr = jsonMatch[0];
+  }
+
+  const parsed: CardScanResponse = JSON.parse(jsonStr);
+  return parsed;
+}
+
+// ── Stage 4: Constrained Parallel Detection ──
+
+export interface ParallelDetectionResult {
+  parallelName: string | null;
+  confidence: number;
+  evidence: string;
+}
+
+/**
+ * Given a confirmed set and its known parallels, classify which parallel
+ * (if any) this card is. Uses visual cues: border color, serial number,
+ * card stock, shimmer effects.
+ *
+ * Temperature 0.0 — pure classification, not generation.
+ */
+export async function detectParallelConstrained(
+  frontBase64: string,
+  frontMimeType: string,
+  availableParallels: Array<{
+    name: string;
+    printRun: number | null;
+    colorFamily?: string | null;
+  }>,
+  textExtraction: CardTextExtraction
+): Promise<ParallelDetectionResult> {
+  // If no parallels are known, skip
+  if (!availableParallels || availableParallels.length === 0) {
+    console.log("[parallel-detection] No parallels available for this set, skipping");
+    return { parallelName: null, confidence: 0.95, evidence: "No parallels defined for this set." };
+  }
+
+  const ai = getGemini();
+
+  const parallelList = availableParallels
+    .map((p) => {
+      const parts = [p.name];
+      if (p.printRun) parts.push(`numbered /${p.printRun}`);
+      if (p.colorFamily) parts.push(`color: ${p.colorFamily}`);
+      return `- ${parts.join(" — ")}`;
+    })
+    .join("\n");
+
+  const serialInfo = textExtraction.serialNumber
+    ? `\nSerial number visible on card: ${textExtraction.serialNumber}`
+    : "\nNo serial number visible on card.";
+
+  const prompt = `${EXPERT_PERSONA_PROMPT}
+
+You are classifying the PARALLEL TYPE of a baseball card. The card's set has been confirmed.
+
+## AVAILABLE PARALLELS FOR THIS SET
+${parallelList}
+
+## EXTRACTED TEXT
+${serialInfo}
+
+## INSTRUCTIONS
+Based on the visual evidence in this card image (border color, card stock appearance, shimmer/refractor effects, serial numbering, foil, holographic elements), determine which parallel this card is.
+
+RULES:
+1. If the card appears to be a standard base card with no special features, return parallelName as null.
+2. Only identify a parallel if you see CLEAR visual evidence matching one of the listed parallels.
+3. Serial numbering is strong evidence — if you see "/199" and there is a parallel numbered /199, that's likely a match.
+4. Do NOT invent parallels not in the list above.
+
+Return JSON only:
+{
+  "parallelName": "exact name from the list above" or null for base,
+  "confidence": 0.0-1.0,
+  "evidence": "describe what visual features you see that support your classification"
+}`;
+
+  const parts: Array<
+    { text: string } | { inlineData: { mimeType: string; data: string } }
+  > = [];
+  parts.push({ text: prompt });
+  parts.push({
+    inlineData: {
+      mimeType: frontMimeType as "image/jpeg" | "image/png" | "image/webp",
+      data: frontBase64,
+    },
+  });
+
+  console.log("[parallel-detection] Classifying against", availableParallels.length, "known parallels");
+  const startTime = Date.now();
+
+  const response = await ai.models.generateContent({
+    model: "gemini-2.5-flash",
+    contents: [{ role: "user", parts }],
+    config: {
+      temperature: 0.0,
+      maxOutputTokens: 512,
+      responseMimeType: "application/json",
+      thinkingConfig: { thinkingBudget: 0 },
+    },
+  });
+
+  const elapsed = Date.now() - startTime;
+  console.log(`[parallel-detection] Completed in ${elapsed}ms`);
+
+  const text = response.text ?? "";
+  let jsonStr = text;
+  if (!text.startsWith("{")) {
+    const jsonMatch = text.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) {
+      console.warn("[parallel-detection] Failed to parse response, defaulting to base");
+      return { parallelName: null, confidence: 0.5, evidence: "Failed to parse parallel detection response." };
+    }
+    jsonStr = jsonMatch[0];
+  }
+
+  try {
+    const parsed = JSON.parse(jsonStr);
+    const result: ParallelDetectionResult = {
+      parallelName: parsed.parallelName ?? null,
+      confidence: typeof parsed.confidence === "number" ? parsed.confidence : 0.5,
+      evidence: parsed.evidence ?? "",
+    };
+    console.log("[parallel-detection] Result:", JSON.stringify(result));
+    return result;
+  } catch (err) {
+    console.error("[parallel-detection] JSON parse error:", err);
+    return { parallelName: null, confidence: 0.5, evidence: "Parse error in parallel detection." };
   }
 }

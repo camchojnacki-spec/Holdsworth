@@ -4,11 +4,12 @@ import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { Save, Loader2, Check } from "lucide-react";
+import { Save, Loader2, Check, Database, ChevronRight } from "lucide-react";
 import { getSettings, saveSettings, type SettingsData } from "@/actions/settings";
+import Link from "next/link";
 
 export default function SettingsPage() {
-  const [settings, setSettings] = useState<SettingsData>({ province: "ON", updateFrequency: "weekly", alertThreshold: 10 });
+  const [settings, setSettings] = useState<SettingsData>({ province: "ON", updateFrequency: "weekly", alertThreshold: 10, currency: "CAD" });
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -76,6 +77,30 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
+      {/* Display Currency */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Display Currency</CardTitle>
+          <CardDescription>Primary currency shown across the app</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div>
+            <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">Currency</label>
+            <select
+              value={settings.currency ?? "CAD"}
+              onChange={(e) => setSettings(s => ({ ...s, currency: e.target.value }))}
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            >
+              <option value="CAD">CAD — Canadian Dollar</option>
+              <option value="USD">USD — US Dollar</option>
+            </select>
+            <p className="text-xs text-muted-foreground mt-1.5">
+              Prices are sourced in USD and converted using live exchange rates. CAD is recommended for Canadian collectors.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Price tracking */}
       <Card>
         <CardHeader>
@@ -109,6 +134,28 @@ export default function SettingsPage() {
           </div>
         </CardContent>
       </Card>
+
+      {/* Reference Database */}
+      <Link href="/settings/reference-db" className="block group">
+        <Card className="transition-colors hover:border-[var(--color-burg-light)]/40">
+          <CardContent className="p-6 flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--color-burg)]/20">
+                <Database className="h-5 w-5 text-[var(--color-burg-light)]" />
+              </div>
+              <div>
+                <p className="text-base font-medium text-white group-hover:text-[var(--color-burg-light)] transition-colors">
+                  Reference Database
+                </p>
+                <p className="text-sm text-muted-foreground">
+                  Browse sets, checklists, and parallel data
+                </p>
+              </div>
+            </div>
+            <ChevronRight className="h-5 w-5 text-muted-foreground group-hover:text-[var(--color-burg-light)] transition-colors" />
+          </CardContent>
+        </Card>
+      </Link>
 
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving} className="gap-2">

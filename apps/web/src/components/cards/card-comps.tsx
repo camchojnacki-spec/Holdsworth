@@ -120,10 +120,10 @@ export function CardComps({ cardId }: CardCompsProps) {
                 {isRealData ? "Fair Market Value" : "Estimated Value"}
               </label>
               <p style={{ fontFamily: "var(--font-mono)" }} className="text-3xl font-medium text-[var(--color-burg-light)] mt-1">
-                ${comps.estimate.valueUsd.toFixed(2)}
+                ${comps.estimate.valueCad.toFixed(2)} <span className="text-lg text-muted-foreground">CAD</span>
               </p>
               <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground mt-1">
-                ~${comps.estimate.valueCad.toFixed(2)} CAD
+                ~${comps.estimate.valueUsd.toFixed(2)} USD
               </p>
             </div>
 
@@ -186,9 +186,14 @@ export function CardComps({ cardId }: CardCompsProps) {
                               {h.matchScore}%
                             </span>
                           )}
-                          <span style={{ fontFamily: "var(--font-mono)" }} className="text-sm font-medium text-[var(--color-burg-light)]">
-                            ${parseFloat(h.priceUsd).toFixed(2)}
-                          </span>
+                          <div className="text-right">
+                            <span style={{ fontFamily: "var(--font-mono)" }} className="text-sm font-medium text-[var(--color-burg-light)]">
+                              ${parseFloat(h.priceCad).toFixed(2)}
+                            </span>
+                            <span style={{ fontFamily: "var(--font-mono)" }} className="block text-[9px] text-muted-foreground">
+                              ${parseFloat(h.priceUsd).toFixed(2)} USD
+                            </span>
+                          </div>
                         </div>
                       </div>
                     );
@@ -197,9 +202,7 @@ export function CardComps({ cardId }: CardCompsProps) {
               </>
             )}
 
-            <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground pt-1">
-              Last updated: {new Date(comps.estimate.lastUpdated).toLocaleDateString()}
-            </p>
+            <StalenessIndicator lastUpdated={comps.estimate.lastUpdated} />
           </div>
         ) : jobStatus === "pending" || jobStatus === "running" ? (
           <div className="py-8">
@@ -265,6 +268,51 @@ interface PriceBarChartProps {
     sourceName: string;
   }>;
   estimateUsd: number;
+}
+
+// ── Staleness Indicator (B-018) ──
+
+function StalenessIndicator({ lastUpdated }: { lastUpdated: Date }) {
+  const now = new Date();
+  const updated = new Date(lastUpdated);
+  const diffMs = now.getTime() - updated.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  const diffHours = Math.floor(diffMs / (1000 * 60 * 60));
+
+  let timeAgo: string;
+  if (diffHours < 1) timeAgo = "just now";
+  else if (diffHours < 24) timeAgo = `${diffHours}h ago`;
+  else if (diffDays === 1) timeAgo = "yesterday";
+  else if (diffDays < 7) timeAgo = `${diffDays}d ago`;
+  else timeAgo = updated.toLocaleDateString();
+
+  // Fresh (<24h) = green, recent (<7d) = default, stale (7-30d) = yellow, very stale (>30d) = red
+  let colorClass = "text-muted-foreground";
+  let statusText = "";
+  if (diffDays < 1) {
+    colorClass = "text-[var(--color-green-light)]";
+    statusText = "Fresh";
+  } else if (diffDays < 7) {
+    colorClass = "text-muted-foreground";
+    statusText = "Recent";
+  } else if (diffDays < 30) {
+    colorClass = "text-yellow-500";
+    statusText = "Aging";
+  } else {
+    colorClass = "text-destructive";
+    statusText = "Stale";
+  }
+
+  return (
+    <div className="flex items-center justify-between pt-1">
+      <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-muted-foreground">
+        Updated {timeAgo}
+      </p>
+      <span style={{ fontFamily: "var(--font-mono)" }} className={`text-[9px] tracking-wider uppercase ${colorClass}`}>
+        {statusText}
+      </span>
+    </div>
+  );
 }
 
 function PriceBarChart({ history, estimateUsd }: PriceBarChartProps) {

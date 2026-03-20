@@ -11,6 +11,9 @@ import type { CardWithDetails } from "@/types/cards";
 
 interface CardGridItemProps {
   card: CardWithDetails;
+  isSelected?: boolean;
+  isSelecting?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
 function TrendIcon({ trend }: { trend: string | null }) {
@@ -19,7 +22,7 @@ function TrendIcon({ trend }: { trend: string | null }) {
   return <Minus className="h-3 w-3 text-muted-foreground" />;
 }
 
-export function CardGridItem({ card }: CardGridItemProps) {
+export function CardGridItem({ card, isSelected, isSelecting, onToggleSelect }: CardGridItemProps) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -40,11 +43,36 @@ export function CardGridItem({ card }: CardGridItemProps) {
     ? `${yearStr} ${setDisplay}`
     : setDisplay;
 
+  const handleCheckboxClick = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    onToggleSelect?.(card.id);
+  };
+
   return (
-    <div className="group relative rounded-xl border border-border bg-card overflow-hidden transition-all hover:border-primary/50 hover:shadow-lg hover:shadow-primary/5">
+    <div className={`group relative rounded-xl border bg-card overflow-hidden transition-all hover:shadow-lg hover:shadow-primary/5 ${isSelected ? "border-[#8B2252] ring-1 ring-[#8B2252]/50" : "border-border hover:border-primary/50"}`}>
       <Link href={`/cards/${card.id}`}>
         {/* Card image */}
         <div className="aspect-[2.5/3.5] bg-muted relative overflow-hidden">
+          {/* Selection checkbox */}
+          {onToggleSelect && (
+            <button
+              onClick={handleCheckboxClick}
+              className={`absolute top-2 left-2 z-10 w-6 h-6 rounded border-2 flex items-center justify-center transition-all ${
+                isSelected
+                  ? "bg-[#8B2252] border-[#8B2252] opacity-100"
+                  : isSelecting
+                    ? "border-white/60 bg-black/30 opacity-100"
+                    : "border-white/60 bg-black/30 opacity-0 group-hover:opacity-100"
+              }`}
+            >
+              {isSelected && (
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="white" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M2 6l3 3 5-5" />
+                </svg>
+              )}
+            </button>
+          )}
           {(card.thumbnailUrl || card.originalUrl) ? (
             <img
               src={card.thumbnailUrl || card.originalUrl || ""}
@@ -69,19 +97,36 @@ export function CardGridItem({ card }: CardGridItemProps) {
               </Badge>
             )}
           </div>
+          {/* Confidence badge — top right */}
+          <div className="absolute bottom-2 right-2">
+            {card.referenceCardId ? (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-[var(--color-green)]/20 px-1.5 py-0.5 text-[9px] font-semibold text-[var(--color-green-light)]" style={{ fontFamily: "var(--font-mono)" }}>
+                Verified
+              </span>
+            ) : card.aiCorrected ? (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-blue-500/20 px-1.5 py-0.5 text-[9px] font-semibold text-blue-300" style={{ fontFamily: "var(--font-mono)" }}>
+                Corrected
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-0.5 rounded-full bg-white/10 px-1.5 py-0.5 text-[9px] font-semibold text-muted-foreground" style={{ fontFamily: "var(--font-mono)" }}>
+                AI
+              </span>
+            )}
+          </div>
         </div>
 
-        {/* Card info */}
-        <div className="p-3 space-y-1">
-          <p style={{ fontFamily: "var(--font-display)" }} className="text-sm truncate text-white">{card.playerName || "Unknown Player"}</p>
-          <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider text-muted-foreground truncate">
+        {/* Card info — compact on mobile, expanded on desktop */}
+        <div className="p-2 sm:p-3 space-y-0.5 sm:space-y-1">
+          <p style={{ fontFamily: "var(--font-display)" }} className="text-xs sm:text-sm truncate text-white">{card.playerName || "Unknown Player"}</p>
+          <p style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] sm:text-[10px] tracking-wider text-muted-foreground truncate">
             {subtitle}{card.cardNumber ? ` #${card.cardNumber}` : ""}
           </p>
+          {/* Parallel — hidden on mobile to save space */}
           {card.parallelVariant && (
-            <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] text-[var(--color-burg-light)] truncate">{card.parallelVariant}</p>
+            <p style={{ fontFamily: "var(--font-mono)" }} className="hidden sm:block text-[10px] text-[var(--color-burg-light)] truncate">{card.parallelVariant}</p>
           )}
-          <div className="flex items-center justify-between pt-1">
-            <span style={{ fontFamily: "var(--font-mono)" }} className="text-sm font-medium">
+          <div className="flex items-center justify-between pt-0.5 sm:pt-1">
+            <span style={{ fontFamily: "var(--font-mono)" }} className="text-xs sm:text-sm font-medium">
               {card.estimatedValueCad
                 ? formatCurrency(card.estimatedValueCad, "CAD")
                 : "—"}

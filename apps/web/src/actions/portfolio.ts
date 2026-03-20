@@ -1,7 +1,8 @@
 "use server";
 
-import { db, cards, players, sets, manufacturers, priceEstimates, cardPhotos, priceHistory, priceSources } from "@holdsworth/db";
-import { eq, desc, sql, and, isNotNull } from "drizzle-orm";
+import { db, cards, players, sets, manufacturers, priceEstimates, cardPhotos, priceHistory, priceSources, portfolioSnapshots } from "@holdsworth/db";
+import { eq, desc, sql, and, isNotNull, isNull } from "drizzle-orm";
+import { revalidatePath } from "next/cache";
 
 // ── Portfolio Overview ──
 
@@ -50,7 +51,7 @@ export interface PortfolioStats {
 }
 
 export async function getPortfolioStats(): Promise<PortfolioStats> {
-  // Total cards + cost
+  // Total cards + cost (exclude soft-deleted)
   const [countResult] = await db
     .select({
       total: sql<number>`count(*)::int`,
@@ -65,7 +66,8 @@ export async function getPortfolioStats(): Promise<PortfolioStats> {
         end
       ), 0)`,
     })
-    .from(cards);
+    .from(cards)
+    .where(isNull(cards.deletedAt));
 
   // Portfolio value (only in_collection + for_sale)
   const [valueResult] = await db
@@ -75,7 +77,7 @@ export async function getPortfolioStats(): Promise<PortfolioStats> {
       pricedCards: sql<number>`count(*)::int`,
     })
     .from(priceEstimates)
-    .innerJoin(cards, and(eq(priceEstimates.cardId, cards.id), sql`${cards.status} != 'sold'`));
+    .innerJoin(cards, and(eq(priceEstimates.cardId, cards.id), sql`${cards.status} != 'sold'`, isNull(cards.deletedAt)));
 
   // Top 5 most valuable cards
   const topCards = await db
@@ -97,7 +99,7 @@ export async function getPortfolioStats(): Promise<PortfolioStats> {
     .leftJoin(players, eq(cards.playerId, players.id))
     .leftJoin(sets, eq(cards.setId, sets.id))
     .leftJoin(cardPhotos, and(eq(cardPhotos.cardId, cards.id), eq(cardPhotos.photoType, "front")))
-    .where(sql`${cards.status} != 'sold'`)
+    .where(and(sql`${cards.status} != 'sold'`, isNull(cards.deletedAt)))
     .orderBy(desc(sql`${priceEstimates.estimatedValueUsd}::numeric`))
     .limit(5);
 
@@ -119,7 +121,8 @@ export async function getPortfolioStats(): Promise<PortfolioStats> {
     .where(and(
       isNotNull(priceEstimates.trendPercentage),
       sql`${cards.status} != 'sold'`,
-      sql`abs(${priceEstimates.trendPercentage}::numeric) > 0`
+      sql`abs(${priceEstimates.trendPercentage}::numeric) > 0`,
+      isNull(cards.deletedAt)
     ))
     .orderBy(desc(sql`abs(${priceEstimates.trendPercentage}::numeric)`))
     .limit(5);
@@ -187,4 +190,76 @@ export async function getPortfolioStats(): Promise<PortfolioStats> {
       sold: countResult?.sold ?? 0,
     },
   };
+}
+
+// ── Portfolio Snapshot ──
+
+/**
+ * Take a portfolio snapshot — aggregates current collection value and stores it.
+ * Can be called manually from the dashboard or on a schedule.
+ */
+export async function takePortfolioSnapshot(): Promise<{
+  success: boolean;
+  snapshot?: {
+    totalValueUsd: string;
+    totalValueCad: string;
+    totalCostCad: string;
+    cardCount: number;
+    pricedCount: number;
+  };
+  error?: string;
+}> {
+  try {
+    const [countRes] = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(cards)
+      .where(isNull(cards.deletedAt));
+    const cardCount = countRes?.count ?? 0;
+
+    const [valueRes] = await db
+      .select({
+        totalUsd: sql<string>`coalesce(sum(${priceEstimates.estimatedValueUsd}::numeric), 0)`,
+        totalCad: sql<string>`coalesce(sum(${priceEstimates.estimatedValueCad}::numeric), 0)`,
+        pricedCount: sql<number>`count(${priceEstimates.id})::int`,
+      })
+      .from(priceEstimates)
+      .innerJoin(cards, eq(priceEstimates.cardId, cards.id))
+      .where(isNull(cards.deletedAt));
+
+    const totalValueUsd = valueRes?.totalUsd ?? "0";
+    const totalValueCad = valueRes?.totalCad ?? "0";
+    const pricedCount = valueRes?.pricedCount ?? 0;
+
+    const [costRes] = await db
+      .select({
+        totalCost: sql<string>`coalesce(sum(${cards.purchasePrice}::numeric), 0)`,
+      })
+      .from(cards)
+      .where(isNull(cards.deletedAt));
+    const totalCostCad = costRes?.totalCost ?? "0";
+
+    const today = new Date().toISOString().slice(0, 10);
+
+    await db
+      .insert(portfolioSnapshots)
+      .values({
+        snapshotDate: today,
+        totalValueUsd,
+        totalValueCad,
+        totalCostCad,
+        cardCount,
+        pricedCount,
+      })
+      .onConflictDoNothing();
+
+    revalidatePath("/dashboard");
+
+    return {
+      success: true,
+      snapshot: { totalValueUsd, totalValueCad, totalCostCad, cardCount, pricedCount },
+    };
+  } catch (err) {
+    console.error("[portfolio] Snapshot failed:", err);
+    return { success: false, error: String(err) };
+  }
 }

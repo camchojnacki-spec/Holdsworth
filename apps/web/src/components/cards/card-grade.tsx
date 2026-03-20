@@ -3,8 +3,11 @@
 import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Shield } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Shield, ChevronDown, TrendingUp, TrendingDown, Sparkles } from "lucide-react";
 import { gradeCard, getCardGradeReport, type GradeReport } from "@/actions/grading";
+import { GradingRadarChart } from "@/components/cards/grading-radar-chart";
+import { GradeValueChart } from "@/components/cards/grade-value-chart";
 
 interface CardGradeProps {
   cardId: string;
@@ -20,6 +23,7 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
   const [loading, setLoading] = useState(true);
   const [grading, setGrading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [usePremium, setUsePremium] = useState(false);
 
   useEffect(() => {
     getCardGradeReport(cardId).then((r) => {
@@ -32,40 +36,58 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
     setGrading(true);
     setError(null);
     try {
-      const result = await gradeCard(cardId);
+      const result = await gradeCard(cardId, usePremium ? "premium" : "standard");
       if (result) {
         setReport(result);
       } else {
-        setError("Could not grade — check that a front photo exists");
+        setError("Grading returned no result — please try again");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Grading failed");
+      const msg = err instanceof Error ? err.message : "Grading failed";
+      setError(msg);
     }
     setGrading(false);
   };
 
   return (
     <Card>
-      <CardHeader className="pb-3">
+      <CardHeader className="pb-2 sm:pb-3 px-3 sm:px-6 pt-3 sm:pt-6">
         <div className="flex items-center justify-between">
-          <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-lg font-normal text-white">
+          <CardTitle style={{ fontFamily: "var(--font-display)" }} className="text-base sm:text-lg font-normal text-white">
             Condition
           </CardTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleGrade}
-            disabled={grading}
-            className="gap-1.5 text-muted-foreground hover:text-[var(--color-burg-light)] h-7 px-2"
-          >
-            <Shield className="h-3 w-3" />
-            <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase">
-              {grading ? "Grading..." : report ? "Re-grade" : "Grade Card"}
-            </span>
-          </Button>
+          <div className="flex items-center gap-1.5">
+            {/* B-041: Model selector */}
+            <button
+              onClick={() => setUsePremium(!usePremium)}
+              className={`flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] transition-colors ${
+                usePremium
+                  ? "bg-[var(--color-burg)]/20 text-[var(--color-burg-light)]"
+                  : "text-muted-foreground/50 hover:text-muted-foreground"
+              }`}
+              title={usePremium ? "Using Gemini Pro (slower, more accurate)" : "Using Gemini Flash (faster)"}
+            >
+              <Sparkles className="h-2.5 w-2.5" />
+              <span style={{ fontFamily: "var(--font-mono)" }} className="tracking-wider uppercase">
+                {usePremium ? "Pro" : "Fast"}
+              </span>
+            </button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleGrade}
+              disabled={grading}
+              className="gap-1.5 text-muted-foreground hover:text-[var(--color-burg-light)] h-7 px-2"
+            >
+              <Shield className="h-3 w-3" />
+              <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase">
+                {grading ? "Grading..." : report ? "Re-grade" : "Grade Card"}
+              </span>
+            </Button>
+          </div>
         </div>
       </CardHeader>
-      <CardContent className="space-y-3">
+      <CardContent className="space-y-2 sm:space-y-3 px-3 sm:px-6 pb-3 sm:pb-6">
         {/* Existing condition info */}
         {condition && (
           <div>
@@ -110,7 +132,7 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
                 Analyzing card condition
               </p>
               <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
-                Examining centering · corners · edges · surface
+                {usePremium ? "Premium analysis" : "Standard analysis"} · Centering · Corners · Edges · Surface
               </p>
             </div>
           </div>
@@ -127,19 +149,24 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
                 <p style={{ fontFamily: "var(--font-display)" }} className="text-lg font-light text-white">
                   {report.overallLabel}
                 </p>
-                <div className="flex items-center gap-2 mt-0.5">
+                <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                   <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
                     {report.confidence}% confidence
                   </span>
                   <span style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
                     · Photo: {report.photoQuality}
                   </span>
+                  {report.modelUsed && (
+                    <span style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] tracking-wider uppercase text-muted-foreground/50">
+                      · {report.modelUsed.includes("pro") ? "Pro" : "Flash"}
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
 
             {/* Dimension Scores */}
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
               <DimensionBar label="Centering" score={report.dimensions.centering.score} detail={`${report.dimensions.centering.leftRight} LR · ${report.dimensions.centering.topBottom} TB`} />
               <DimensionBar label="Corners" score={report.dimensions.corners.score} detail={report.dimensions.corners.notes} />
               <DimensionBar label="Edges" score={report.dimensions.edges.score} detail={report.dimensions.edges.notes} />
@@ -147,6 +174,91 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
               <DimensionBar label="Print" score={report.dimensions.printQuality.score} detail={report.dimensions.printQuality.notes} />
               <DimensionBar label="Eye Appeal" score={report.dimensions.eyeAppeal.score} detail={report.dimensions.eyeAppeal.notes} />
             </div>
+
+            {/* Radar Chart */}
+            <GradingRadarChart
+              centering={report.dimensions.centering.score}
+              corners={report.dimensions.corners.score}
+              edges={report.dimensions.edges.score}
+              surface={report.dimensions.surface.score}
+              printQuality={report.dimensions.printQuality.score}
+              eyeAppeal={report.dimensions.eyeAppeal.score}
+            />
+
+            {/* B-023: Autograph Analysis */}
+            {report.autographAnalysis && (
+              <div className="bg-secondary/20 rounded-lg p-3 space-y-1">
+                <div className="flex items-center gap-2">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
+                    Autograph Analysis
+                  </label>
+                  <Badge variant="secondary" className="text-[9px] h-4 px-1.5">
+                    {report.autographAnalysis.type}
+                  </Badge>
+                  {report.autographAnalysis.authenticated && (
+                    <Badge variant="success" className="text-[9px] h-4 px-1.5">Certified</Badge>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {report.autographAnalysis.placement && `Placement: ${report.autographAnalysis.placement}. `}
+                  {report.autographAnalysis.quality && `Quality: ${report.autographAnalysis.quality}. `}
+                  {report.autographAnalysis.notes}
+                </p>
+              </div>
+            )}
+
+            {/* B-008: Graded vs Raw Recommendation */}
+            {report.gradedVsRaw && report.gradedVsRaw.rawEstimateUsd > 0 && (
+              <div className={`rounded-lg p-3 space-y-2 ${
+                report.gradedVsRaw.shouldGrade
+                  ? "bg-[var(--color-green)]/10 border border-[var(--color-green)]/20"
+                  : "bg-secondary/20"
+              }`}>
+                <div className="flex items-center gap-2">
+                  <label style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-wider uppercase text-muted-foreground">
+                    Should I Grade?
+                  </label>
+                  {report.gradedVsRaw.shouldGrade ? (
+                    <TrendingUp className="h-3 w-3 text-[var(--color-green-light)]" />
+                  ) : (
+                    <TrendingDown className="h-3 w-3 text-muted-foreground" />
+                  )}
+                </div>
+                <div className="grid grid-cols-3 gap-2 text-center">
+                  <div>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] tracking-wider uppercase text-muted-foreground">Raw</p>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-sm text-white">${report.gradedVsRaw.rawEstimateUsd.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] tracking-wider uppercase text-muted-foreground">PSA {report.overallGrade}</p>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-sm text-[var(--color-burg-light)]">${report.gradedVsRaw.gradedEstimateUsd.toFixed(2)}</p>
+                  </div>
+                  <div>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] tracking-wider uppercase text-muted-foreground">Net Gain</p>
+                    <p style={{ fontFamily: "var(--font-mono)" }} className={`text-sm ${report.gradedVsRaw.netGradingBenefit > 0 ? "text-[var(--color-green-light)]" : "text-muted-foreground"}`}>
+                      {report.gradedVsRaw.netGradingBenefit > 0 ? "+" : ""}${report.gradedVsRaw.netGradingBenefit.toFixed(2)}
+                    </p>
+                  </div>
+                </div>
+                <p className="text-xs text-muted-foreground">{report.gradedVsRaw.recommendation}</p>
+                <p style={{ fontFamily: "var(--font-mono)" }} className="text-[9px] text-muted-foreground/60">
+                  Grading fee: ~${report.gradedVsRaw.gradingCostUsd} USD (PSA economy)
+                </p>
+              </div>
+            )}
+
+            {/* Grade-vs-Value Chart */}
+            {report.gradedVsRaw && report.gradedVsRaw.rawEstimateUsd > 0 && (
+              <GradeValueChart
+                rawValue={report.gradedVsRaw.rawEstimateUsd}
+                psa8Value={Math.round(report.gradedVsRaw.rawEstimateUsd * 1.2 * 100) / 100}
+                psa9Value={Math.round(report.gradedVsRaw.rawEstimateUsd * 1.8 * 100) / 100}
+                psa10Value={Math.round(report.gradedVsRaw.rawEstimateUsd * 3.5 * 100) / 100}
+                predictedGrade={report.overallGrade}
+                gradingCost={report.gradedVsRaw.gradingCostUsd}
+                currency="USD"
+              />
+            )}
 
             {/* Detailed Breakdown */}
             <details className="group">
@@ -157,6 +269,15 @@ export function CardGrade({ cardId, condition, conditionNotes, graded, gradingCo
                 <DetailSection title="Centering">
                   <DetailRow label="Left / Right" value={report.dimensions.centering.leftRight} />
                   <DetailRow label="Top / Bottom" value={report.dimensions.centering.topBottom} />
+                  {report.centeringPreAnalysis && (
+                    <>
+                      <DetailRow label="Left Border" value={`${report.centeringPreAnalysis.leftBorderPx}px`} />
+                      <DetailRow label="Right Border" value={`${report.centeringPreAnalysis.rightBorderPx}px`} />
+                      <DetailRow label="Top Border" value={`${report.centeringPreAnalysis.topBorderPx}px`} />
+                      <DetailRow label="Bottom Border" value={`${report.centeringPreAnalysis.bottomBorderPx}px`} />
+                      <DetailRow label="Max Grade (centering)" value={`PSA ${report.centeringPreAnalysis.maxGradeForCentering}`} />
+                    </>
+                  )}
                 </DetailSection>
                 <DetailSection title="Corners">
                   <DetailRow label="Top Left" value={report.dimensions.corners.topLeft} />

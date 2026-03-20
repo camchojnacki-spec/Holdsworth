@@ -60,6 +60,9 @@ export const cards = pgTable(
     aiRawResponse: jsonb("ai_raw_response"),
     metadata: jsonb("metadata"),
 
+    // Soft delete
+    deletedAt: timestamp("deleted_at"),
+
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },

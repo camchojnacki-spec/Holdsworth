@@ -33,6 +33,8 @@ export interface CardWithDetails {
   subsetOrInsert?: string | null;
   aiCorrected?: boolean;
   referenceCardId?: string | null;
+  referenceProductName?: string | null;
+  referenceProductYear?: number | null;
 }
 
 export type CardStatus = "in_collection" | "for_sale" | "sold" | "traded";

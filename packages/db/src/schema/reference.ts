@@ -8,6 +8,9 @@ import {
   timestamp,
   index,
   unique,
+  text,
+  numeric,
+  jsonb,
 } from "drizzle-orm/pg-core";
 import { manufacturers } from "./manufacturers";
 
@@ -44,9 +47,12 @@ export const subsets = pgTable(
       .references(() => setProducts.id)
       .notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    subsetType: varchar("subset_type", { length: 50 }).notNull(), // "base", "insert", "autograph", "relic"
-    numberingPattern: varchar("numbering_pattern", { length: 100 }), // "90A-*" pattern
+    subsetType: varchar("subset_type", { length: 50 }).notNull(), // "base", "insert", "parallel", "auto", "relic", "sp"
+    numberingPattern: varchar("numbering_pattern", { length: 100 }), // "T89-*" pattern
+    baseSetSize: integer("base_set_size"), // how many cards in this subset
     totalCards: integer("total_cards"),
+    isNumbered: boolean("is_numbered").default(false),
+    printRun: integer("print_run"),
     isAutograph: boolean("is_autograph").default(false),
     isRelic: boolean("is_relic").default(false),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -73,6 +79,11 @@ export const referenceCards = pgTable(
     isAutograph: boolean("is_autograph").default(false),
     isRelic: boolean("is_relic").default(false),
     isShortPrint: boolean("is_short_print").default(false),
+    position: varchar("position", { length: 50 }),
+    jerseyNumber: varchar("jersey_number", { length: 10 }),
+    printRun: integer("print_run"),
+    imageVariation: boolean("image_variation").default(false),
+    notes: text("notes"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
@@ -95,9 +106,41 @@ export const parallelTypes = pgTable(
     name: varchar("name", { length: 255 }).notNull(), // "Gold /2025"
     printRun: integer("print_run"), // 2025, 75, 1 etc.
     serialNumbered: boolean("serial_numbered").default(false),
+    colorFamily: varchar("color_family", { length: 50 }),
+    finishType: varchar("finish_type", { length: 50 }),
+    exclusiveTo: varchar("exclusive_to", { length: 100 }),
+    priceMultiplier: numeric("price_multiplier", { precision: 5, scale: 2 }),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     index("parallel_types_set_product_idx").on(table.setProductId),
+  ]
+);
+
+// ── Parallel Market Data ──
+// Dynamic price multipliers computed from actual market sales data
+export const parallelMarketData = pgTable(
+  "parallel_market_data",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    parallelTypeId: uuid("parallel_type_id")
+      .references(() => parallelTypes.id, { onDelete: "cascade" })
+      .notNull(),
+    setProductId: uuid("set_product_id")
+      .references(() => setProducts.id, { onDelete: "cascade" })
+      .notNull(),
+    computedMultiplier: numeric("computed_multiplier", { precision: 8, scale: 3 }),
+    avgPriceUsd: numeric("avg_price_usd", { precision: 10, scale: 2 }),
+    basePriceUsd: numeric("base_price_usd", { precision: 10, scale: 2 }),
+    sampleSize: integer("sample_size").default(0),
+    lastComputedAt: timestamp("last_computed_at").defaultNow().notNull(),
+    priceRange: jsonb("price_range"), // { min, max, median }
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => [
+    index("parallel_market_data_parallel_type_idx").on(table.parallelTypeId),
+    index("parallel_market_data_set_product_idx").on(table.setProductId),
+    unique("parallel_market_data_type_set_idx").on(table.parallelTypeId, table.setProductId),
   ]
 );

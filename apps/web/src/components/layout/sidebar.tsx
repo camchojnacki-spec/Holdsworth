@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -8,31 +9,62 @@ import {
   Library,
   ScanLine,
   DollarSign,
-  Bell,
   Store,
-  ShoppingCart,
   Settings,
   X,
+  ChevronDown,
+  LogOut,
+  BarChart3,
 } from "lucide-react";
 
 const navigation = [
   { name: "Home", href: "/", icon: LayoutDashboard },
+  { name: "Dashboard", href: "/dashboard", icon: BarChart3 },
   { name: "Binder", href: "/cards", icon: Library },
-  { name: "Pull", href: "/scan", icon: ScanLine },
+  {
+    name: "Pull",
+    icon: ScanLine,
+    children: [
+      { name: "Single Scan", href: "/scan" },
+      { name: "Batch Scan", href: "/scan/batch" },
+      { name: "Pack Rip", href: "/scan/rip" },
+    ],
+  },
   { name: "Portfolio", href: "/prices", icon: DollarSign },
-  { name: "Wax Alerts", href: "/prices/alerts", icon: Bell },
-  { name: "Vendors", href: "/vendors", icon: Store },
-  { name: "Deals", href: "/vendors/deals", icon: ShoppingCart },
+  {
+    name: "Market",
+    icon: Store,
+    children: [
+      { name: "Wax Alerts", href: "/prices/alerts" },
+      { name: "Vendors", href: "/vendors" },
+      { name: "Deals", href: "/vendors/deals" },
+    ],
+  },
   { name: "Settings", href: "/settings", icon: Settings },
 ];
 
 interface SidebarProps {
   open: boolean;
   onClose: () => void;
+  user?: {
+    name?: string | null;
+    email?: string | null;
+    image?: string | null;
+  } | null;
 }
 
-export function Sidebar({ open, onClose }: SidebarProps) {
+export function Sidebar({ open, onClose, user }: SidebarProps) {
   const pathname = usePathname();
+  const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
+
+  const toggleGroup = (name: string, currentlyExpanded: boolean) => {
+    setExpandedGroups(prev => ({ ...prev, [name]: !currentlyExpanded }));
+  };
+
+  // Auto-expand Market if user is on a Market sub-page
+  const isMarketActive = pathname.startsWith("/prices/alerts") || pathname.startsWith("/vendors");
+  // Auto-expand Pull if user is on a scan sub-page
+  const isPullActive = pathname.startsWith("/scan");
 
   return (
     <>
@@ -64,12 +96,60 @@ export function Sidebar({ open, onClose }: SidebarProps) {
         {/* Navigation */}
         <nav className="flex-1 space-y-1 px-3 py-4">
           {navigation.map((item) => {
-            const isActive =
-              item.href === "/" ? pathname === "/" : pathname.startsWith(item.href);
+            // Collapsible group (Pull, Market, etc.)
+            if ("children" in item && item.children) {
+              const isGroupActive = item.name === "Market" ? isMarketActive
+                : item.name === "Pull" ? isPullActive
+                : false;
+              const expanded = expandedGroups[item.name] ?? isGroupActive;
+              return (
+                <div key={item.name}>
+                  <button
+                    onClick={() => toggleGroup(item.name, expanded)}
+                    className={cn(
+                      "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors w-full",
+                      isGroupActive
+                        ? "text-[var(--color-burg-light)]"
+                        : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                    )}
+                  >
+                    <item.icon className="h-4 w-4" />
+                    {item.name}
+                    <ChevronDown className={cn("h-3 w-3 ml-auto transition-transform", expanded && "rotate-180")} />
+                  </button>
+                  {expanded && (
+                    <div className="ml-7 mt-0.5 space-y-0.5">
+                      {item.children.map((child) => {
+                        const childActive = child.href === "/scan" ? pathname === "/scan" : pathname.startsWith(child.href);
+                        return (
+                          <Link
+                            key={child.name}
+                            href={child.href}
+                            onClick={onClose}
+                            className={cn(
+                              "flex items-center rounded-md px-3 py-1.5 text-[13px] font-medium transition-colors",
+                              childActive
+                                ? "bg-primary/10 text-[var(--color-burg-light)]"
+                                : "text-muted-foreground hover:bg-accent hover:text-foreground"
+                            )}
+                          >
+                            {child.name}
+                          </Link>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              );
+            }
+
+            // Regular nav item
+            const href = (item as { href: string }).href;
+            const isActive = href === "/" ? pathname === "/" : pathname.startsWith(href);
             return (
               <Link
                 key={item.name}
-                href={item.href}
+                href={href}
                 onClick={onClose}
                 className={cn(
                   "flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors",
@@ -85,11 +165,42 @@ export function Sidebar({ open, onClose }: SidebarProps) {
           })}
         </nav>
 
-        {/* Footer */}
+        {/* Footer — user info + sign out */}
         <div className="border-t border-border p-4">
-          <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-[0.06em] text-muted-foreground">
-            Holdsworth v0.1
-          </p>
+          {user ? (
+            <div className="flex items-center gap-3">
+              {user.image ? (
+                <img
+                  src={user.image}
+                  alt=""
+                  className="h-7 w-7 rounded-full border border-border"
+                  referrerPolicy="no-referrer"
+                />
+              ) : (
+                <div className="flex h-7 w-7 items-center justify-center rounded-full bg-[var(--color-burg)] text-xs font-medium text-[var(--color-h-white)]">
+                  {(user.name ?? user.email ?? "U").charAt(0).toUpperCase()}
+                </div>
+              )}
+              <div className="flex-1 min-w-0">
+                <p className="truncate text-xs font-medium text-foreground">
+                  {user.name ?? user.email}
+                </p>
+              </div>
+              <form action="/api/auth/signout" method="post">
+                <button
+                  type="submit"
+                  className="text-muted-foreground hover:text-foreground transition-colors"
+                  title="Sign out"
+                >
+                  <LogOut className="h-4 w-4" />
+                </button>
+              </form>
+            </div>
+          ) : (
+            <p style={{ fontFamily: "var(--font-mono)" }} className="text-[10px] tracking-[0.06em] text-muted-foreground">
+              Holdsworth v0.1
+            </p>
+          )}
         </div>
       </aside>
     </>

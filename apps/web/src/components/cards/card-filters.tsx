@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter, useSearchParams } from "next/navigation";
-import { useCallback } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X, Download, ArrowUpDown } from "lucide-react";
@@ -30,7 +30,35 @@ export function CardFilters() {
     [router, searchParams]
   );
 
+  // Debounced search input — waits 300ms after typing stops before updating URL
+  const [searchInput, setSearchInput] = useState(search);
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Sync local state when URL search param changes externally (e.g. clear filters)
+  useEffect(() => {
+    setSearchInput(search);
+  }, [search]);
+
+  const handleSearchChange = useCallback(
+    (value: string) => {
+      setSearchInput(value);
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+      debounceRef.current = setTimeout(() => {
+        updateFilter("search", value);
+      }, 300);
+    },
+    [updateFilter]
+  );
+
+  // Cleanup timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, []);
+
   const clearFilters = () => {
+    setSearchInput("");
     router.push("/cards");
   };
 
@@ -48,8 +76,8 @@ export function CardFilters() {
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           placeholder="Search by player, set, or card number..."
-          value={search}
-          onChange={(e) => updateFilter("search", e.target.value)}
+          value={searchInput}
+          onChange={(e) => handleSearchChange(e.target.value)}
           className="pl-9"
         />
       </div>

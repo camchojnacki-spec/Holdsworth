@@ -6,10 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { Loader2, Check, X, RotateCcw, Camera, Upload, SwitchCamera, ArrowRight } from "lucide-react";
+import { Loader2, Check, X, RotateCcw, Camera, Upload, SwitchCamera, ArrowRight, Package, AlertTriangle } from "lucide-react";
 import { scanCard, type ScanActionResult } from "@/actions/scanner";
-import { createCard } from "@/actions/cards";
+import { createCard, checkForDuplicates } from "@/actions/cards";
 import type { CardScanResponse, CardCropRegion } from "@/lib/ai/gemini";
+import { assessPhotoQuality, type PhotoQualityResult } from "@/lib/photo-quality";
+import { PhotoQualityIndicator } from "@/components/scan/photo-quality-indicator";
+import { BackPhotoPrompt } from "@/components/scan/back-photo-prompt";
+import { PhotoTips } from "@/components/scan/photo-tips";
 
 type ScanState = "idle" | "camera-front" | "front-captured" | "camera-back" | "analyzing" | "results" | "saving" | "error";
 
@@ -108,6 +112,8 @@ export default function ScanPage() {
   const [result, setResult] = useState<CardScanResponse | null>(null);
   // Editable fields — initialized from AI result, user can correct before cataloguing
   const [editedFields, setEditedFields] = useState<Record<string, string>>({});
+  const [duplicates, setDuplicates] = useState<Array<{ id: string; playerName: string; setName: string | null; year: number | null; cardNumber: string | null; parallelVariant: string | null }>>([]);
+  const [duplicatesDismissed, setDuplicatesDismissed] = useState(false);
   const [processingTime, setProcessingTime] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +123,8 @@ export default function ScanPage() {
   const streamRef = useRef<MediaStream | null>(null);
   const [facingMode, setFacingMode] = useState<"environment" | "user">("environment");
   const [captureTarget, setCaptureTarget] = useState<"front" | "back">("front");
+  const [frontQuality, setFrontQuality] = useState<PhotoQualityResult | null>(null);
+  const [backQuality, setBackQuality] = useState<PhotoQualityResult | null>(null);
 
   useEffect(() => {
     return () => {
@@ -182,15 +190,19 @@ export default function ScanPage() {
 
     const dataUrl = canvas.toDataURL("image/jpeg", 0.95);
 
-    canvas.toBlob((blob) => {
+    canvas.toBlob(async (blob) => {
       if (!blob) return;
       if (captureTarget === "front") {
         setFrontPreview(dataUrl);
         setFrontBlob(blob);
+        // Run quality check (non-blocking for state update)
+        assessPhotoQuality(dataUrl).then(setFrontQuality).catch(() => {});
         setState("front-captured");
       } else {
         setBackPreview(dataUrl);
         setBackBlob(blob);
+        // Run quality check on back
+        assessPhotoQuality(dataUrl).then(setBackQuality).catch(() => {});
         // Back captured — now analyze
         submitForAnalysis(frontBlob!, blob, dataUrl);
       }
@@ -216,10 +228,14 @@ export default function ScanPage() {
     if (captureTarget === "front") {
       setFrontPreview(compressed);
       setFrontBlob(compressedBlob);
+      // Run quality check
+      assessPhotoQuality(compressed).then(setFrontQuality).catch(() => {});
       setState("front-captured");
     } else {
       setBackPreview(compressed);
       setBackBlob(compressedBlob);
+      // Run quality check on back
+      assessPhotoQuality(compressed).then(setBackQuality).catch(() => {});
       submitForAnalysis(frontBlob!, compressedBlob, compressed);
     }
     if (fileInputRef.current) fileInputRef.current.value = "";
@@ -264,6 +280,20 @@ export default function ScanPage() {
         setCroppedPreview(centerCropped);
       }
       setState("results");
+
+      // Check for duplicates in the background
+      setDuplicates([]);
+      setDuplicatesDismissed(false);
+      checkForDuplicates({
+        playerName: d.player_name,
+        year: d.year || undefined,
+        setName: d.set_name || undefined,
+        cardNumber: d.card_number || undefined,
+      }).then((dupes) => {
+        if (dupes.length > 0) setDuplicates(dupes);
+      }).catch(() => {
+        // Non-blocking — silently ignore duplicate check failures
+      });
     } else {
       setError(response.error ?? "Pull did not resolve. Adjust angle or lighting.");
       setState("error");
@@ -332,7 +362,11 @@ export default function ScanPage() {
     setEditedFields({});
     setError(null);
     setProcessingTime(null);
+    setDuplicates([]);
+    setDuplicatesDismissed(false);
     setCaptureTarget("front");
+    setFrontQuality(null);
+    setBackQuality(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
     if (cameraInputRef.current) cameraInputRef.current.value = "";
   };
@@ -342,9 +376,26 @@ export default function ScanPage() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      <div>
-        <h1 style={{ fontFamily: "var(--font-display)" }} className="text-3xl font-light tracking-wide text-white">Pull</h1>
-        <p className="text-muted-foreground text-sm mt-1">Photograph a card. Holdsworth identifies it.</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 style={{ fontFamily: "var(--font-display)" }} className="text-3xl font-light tracking-wide text-white">Pull</h1>
+          <p className="text-muted-foreground text-sm mt-1">Photograph a card. Holdsworth identifies it.</p>
+        </div>
+        <div className="flex items-center gap-2">
+          <PhotoTips />
+          <a href="/scan/batch">
+            <Button variant="outline" size="sm" className="gap-2 h-8 text-xs">
+              <Upload className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Batch</span>
+            </Button>
+          </a>
+          <a href="/scan/rip">
+            <Button variant="outline" size="sm" className="gap-2 h-8 text-xs">
+              <Package className="h-3.5 w-3.5" />
+              <span className="hidden sm:inline">Pack Rip</span>
+            </Button>
+          </a>
+        </div>
       </div>
 
       <input ref={fileInputRef} type="file" className="hidden" accept="image/jpeg,image/png,image/webp" onChange={handleFileUpload} />
@@ -412,42 +463,73 @@ export default function ScanPage() {
         </Card>
       )}
 
-      {/* ── FRONT CAPTURED — prompt for back ── */}
+      {/* ── FRONT CAPTURED — quality check + prompt for back ── */}
       {state === "front-captured" && frontPreview && (
-        <Card>
-          <CardContent className="p-6">
-            <div className="flex flex-col items-center gap-6">
-              <div className="flex items-center gap-4">
-                <img src={frontPreview} alt="Front captured" className="h-32 w-auto rounded-lg border border-border" />
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <div className="w-5 h-5 rounded-full bg-[var(--color-success)] flex items-center justify-center">
-                      <Check className="h-3 w-3 text-white" />
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-6">
+              <div className="flex flex-col items-center gap-5">
+                <div className="flex items-center gap-4">
+                  <img src={frontPreview} alt="Front captured" className="h-32 w-auto rounded-lg border border-border" />
+                  <div>
+                    <div className="flex items-center gap-2 mb-1">
+                      <div className="w-5 h-5 rounded-full bg-[var(--color-success)] flex items-center justify-center">
+                        <Check className="h-3 w-3 text-white" />
+                      </div>
+                      <span style={{ fontFamily: "var(--font-mono)" }} className="text-[11px] tracking-wider uppercase text-[var(--color-success-light)]">Front captured</span>
                     </div>
-                    <span style={{ fontFamily: "var(--font-mono)" }} className="text-[11px] tracking-wider uppercase text-[var(--color-success-light)]">Front captured</span>
+                    <p className="text-sm text-muted-foreground">Now capture the back for card number,<br />copyright year, and serial numbers.</p>
                   </div>
-                  <p className="text-sm text-muted-foreground">Now capture the back for card number,<br />copyright year, and serial numbers.</p>
                 </div>
-              </div>
 
-              <div className="w-full max-w-sm space-y-3">
-                <span style={{ fontFamily: "var(--font-mono)" }} className="text-[11px] tracking-wider uppercase text-muted-foreground block text-center">Step 2 of 2 · Back side</span>
-                <div className="flex gap-3">
-                  <Button onClick={() => { setCaptureTarget("back"); startCamera("back"); }} className="flex-1 gap-2">
-                    <Camera className="h-4 w-4" />Capture Back
-                  </Button>
-                  <Button variant="outline" onClick={() => { setCaptureTarget("back"); fileInputRef.current?.click(); }} className="flex-1 gap-2">
-                    <Upload className="h-4 w-4" />Upload Back
-                  </Button>
-                </div>
-                <Button variant="ghost" onClick={skipBack} className="w-full gap-2 text-muted-foreground">
-                  Skip — identify from front only
-                  <ArrowRight className="h-4 w-4" />
-                </Button>
+                {/* Photo quality indicator */}
+                {frontQuality && (
+                  <PhotoQualityIndicator result={frontQuality} className="w-full" />
+                )}
+
+                {/* Retake button when quality is poor */}
+                {frontQuality && frontQuality.overall === "poor" && (
+                  <div className="w-full max-w-sm rounded-lg border border-red-500/30 bg-red-950/20 p-3">
+                    <p className="text-xs text-red-300/80 mb-3 text-center">
+                      This photo may produce inaccurate results. Consider retaking it.
+                    </p>
+                    <div className="flex gap-3">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setFrontPreview(null);
+                          setFrontBlob(null);
+                          setFrontQuality(null);
+                          setState("idle");
+                        }}
+                        className="flex-1 gap-2 text-xs border-red-500/30 text-red-200 hover:bg-red-900/30"
+                      >
+                        <RotateCcw className="h-3.5 w-3.5" />
+                        Retake Photo
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        onClick={() => {}}
+                        className="flex-1 text-xs text-muted-foreground"
+                        disabled
+                        style={{ visibility: "hidden" }}
+                      >
+                        {/* Spacer for centering */}
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          {/* Back photo prompt */}
+          <BackPhotoPrompt
+            onScanBack={() => { setCaptureTarget("back"); startCamera("back"); }}
+            onUploadBack={() => { setCaptureTarget("back"); fileInputRef.current?.click(); }}
+            onSkip={skipBack}
+          />
+        </div>
       )}
 
       {/* ── ANALYZING ── */}
@@ -455,17 +537,20 @@ export default function ScanPage() {
         <Card>
           <CardContent className="p-8">
             <div className="flex flex-col items-center">
-              <div className="flex gap-3 mb-6">
+              <div className="flex gap-3 mb-4">
                 {frontPreview && <img src={frontPreview} alt="Front" className="h-40 w-auto object-contain rounded-lg opacity-60" />}
                 {backPreview && <img src={backPreview} alt="Back" className="h-40 w-auto object-contain rounded-lg opacity-60" />}
               </div>
+              {backQuality && (
+                <div className="w-full max-w-sm mb-4">
+                  <PhotoQualityIndicator result={backQuality} />
+                </div>
+              )}
               <div className="relative w-48 h-1 bg-secondary rounded-full overflow-hidden mb-4">
                 <div className="absolute h-full w-1/3 rounded-full" style={{ background: "var(--color-burg)", animation: "scanSweep 2s cubic-bezier(0.16, 1, 0.3, 1) infinite" }} />
               </div>
               <p style={{ fontFamily: "var(--font-display)" }} className="text-xl font-light text-white">Analyzing card</p>
-              <p style={{ fontFamily: "var(--font-mono)" }} className="text-[11px] tracking-wider uppercase text-muted-foreground mt-2">
-                {backPreview ? "Scanning front · Reading back · Identifying" : "Scanning · Identifying · Appraising"}
-              </p>
+              <ScanProgressSteps hasBack={!!backPreview} />
             </div>
           </CardContent>
         </Card>
@@ -527,6 +612,63 @@ export default function ScanPage() {
             </Card>
           </div>
 
+          {/* ── Duplicate Warning ── */}
+          {duplicates.length > 0 && !duplicatesDismissed && (
+            <Card className="border-amber-500/40 bg-amber-950/30">
+              <CardContent className="p-4">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-amber-400 flex-shrink-0 mt-0.5" />
+                  <div className="flex-1 min-w-0">
+                    <h3 style={{ fontFamily: "var(--font-display)" }} className="text-base font-normal text-amber-200">
+                      Possible duplicate detected
+                    </h3>
+                    <p className="text-xs text-amber-300/70 mt-1">
+                      {duplicates.length === 1 ? "This card may already be" : "These cards may already be"} in your collection.
+                    </p>
+                    <ul className="mt-3 space-y-2">
+                      {duplicates.map((d) => (
+                        <li key={d.id}>
+                          <a
+                            href={`/cards/${d.id}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="block rounded-md border border-amber-500/20 bg-amber-950/40 px-3 py-2 hover:border-amber-500/40 transition-colors"
+                          >
+                            <span style={{ fontFamily: "var(--font-mono)" }} className="text-xs text-amber-100">
+                              {d.playerName}
+                              {d.year ? ` · ${d.year}` : ""}
+                              {d.setName ? ` · ${d.setName}` : ""}
+                              {d.cardNumber ? ` #${d.cardNumber}` : ""}
+                              {d.parallelVariant ? ` — ${d.parallelVariant}` : ""}
+                            </span>
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                    <div className="flex gap-2 mt-3">
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        onClick={() => setDuplicatesDismissed(true)}
+                        className="text-xs border-amber-500/30 text-amber-200 hover:bg-amber-900/40"
+                      >
+                        Add Anyway
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        onClick={reset}
+                        className="text-xs text-amber-300/70 hover:text-amber-200"
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
           <div className="flex justify-end gap-3">
             <Button variant="outline" onClick={reset} disabled={state === "saving"} className="gap-2">
               <RotateCcw className="h-4 w-4" />Pull Another
@@ -550,6 +692,56 @@ export default function ScanPage() {
           </CardContent>
         </Card>
       )}
+    </div>
+  );
+}
+
+function ScanProgressSteps({ hasBack }: { hasBack: boolean }) {
+  const [step, setStep] = useState(0);
+  const steps = hasBack
+    ? ["Reading front image", "Reading back image", "Identifying card", "Detecting boundaries", "Cross-referencing database"]
+    : ["Reading card image", "Identifying card", "Detecting boundaries", "Cross-referencing database"];
+
+  useEffect(() => {
+    // Cycle through steps at timed intervals to simulate progress
+    const timings = [1500, 2000, 2500, 3000]; // ms before advancing to next step
+    let timer: ReturnType<typeof setTimeout>;
+
+    function advance(idx: number) {
+      if (idx >= steps.length - 1) return; // Stay on last step
+      timer = setTimeout(() => {
+        setStep(idx + 1);
+        advance(idx + 1);
+      }, timings[idx] || 2000);
+    }
+
+    advance(0);
+    return () => clearTimeout(timer);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  return (
+    <div className="mt-4 space-y-1.5 w-full max-w-xs">
+      {steps.map((label, i) => (
+        <div key={label} className="flex items-center gap-2">
+          {i < step ? (
+            <div className="w-4 h-4 rounded-full bg-[var(--color-success)] flex items-center justify-center flex-shrink-0">
+              <Check className="h-2.5 w-2.5 text-white" />
+            </div>
+          ) : i === step ? (
+            <Loader2 className="h-4 w-4 text-[var(--color-burg-light)] animate-spin flex-shrink-0" />
+          ) : (
+            <div className="w-4 h-4 rounded-full border border-border flex-shrink-0" />
+          )}
+          <span
+            style={{ fontFamily: "var(--font-mono)" }}
+            className={`text-[10px] tracking-wider uppercase transition-colors ${
+              i <= step ? "text-white" : "text-muted-foreground/40"
+            }`}
+          >
+            {label}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

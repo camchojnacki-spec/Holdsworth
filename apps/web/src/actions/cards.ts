@@ -1,11 +1,51 @@
 "use server";
 
-import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, priceSources, priceHistory, pricingJobs, enqueuePriceLookup } from "@holdsworth/db";
-import { eq, desc, ilike, and, sql, or } from "drizzle-orm";
+import { db, cards, players, sets, manufacturers, cardPhotos, priceEstimates, priceSources, priceHistory, pricingJobs, correctionLog, enqueuePriceLookup, referenceCards, setProducts } from "@holdsworth/db";
+import { eq, desc, ilike, and, sql, or, inArray, isNull, isNotNull } from "drizzle-orm";
 import { revalidatePath } from "next/cache";
 import type { CardWithDetails } from "@/types/cards";
 import { uploadCardPhoto } from "@/lib/gcs";
 import { createCardSchema } from "@/lib/validators";
+import { rateLimit } from "@/lib/rate-limit";
+
+// ── Duplicate Check ──
+
+export async function checkForDuplicates(input: {
+  playerName: string;
+  year?: number;
+  setName?: string;
+  cardNumber?: string;
+  parallelVariant?: string;
+}): Promise<Array<{ id: string; playerName: string; setName: string | null; year: number | null; cardNumber: string | null; parallelVariant: string | null }>> {
+  const conditions = [ilike(players.name, input.playerName)];
+
+  if (input.year) {
+    conditions.push(eq(cards.year, input.year));
+  }
+  if (input.setName) {
+    conditions.push(ilike(sets.name, input.setName));
+  }
+  if (input.cardNumber) {
+    conditions.push(eq(cards.cardNumber, input.cardNumber));
+  }
+
+  const rows = await db
+    .select({
+      id: cards.id,
+      playerName: players.name,
+      setName: sets.name,
+      year: cards.year,
+      cardNumber: cards.cardNumber,
+      parallelVariant: cards.parallelVariant,
+    })
+    .from(cards)
+    .innerJoin(players, eq(cards.playerId, players.id))
+    .leftJoin(sets, eq(cards.setId, sets.id))
+    .where(and(...conditions))
+    .limit(5);
+
+  return rows;
+}
 
 // ── Create ──
 
@@ -160,13 +200,17 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
       })
       .returning();
 
-    // Upload photos to GCS and save URLs
+    // Upload photos to GCS and save URLs (with optimized variants)
     if (input.photoUrl) {
       let photoUrl = input.photoUrl;
+      let displayUrl: string | null = null;
+      let thumbnailUrl: string | null = null;
       if (input.photoUrl.startsWith("data:")) {
         try {
-          const { url } = await uploadCardPhoto(input.photoUrl, newCard.id, "front");
-          photoUrl = url;
+          const result = await uploadCardPhoto(input.photoUrl, newCard.id, "front");
+          photoUrl = result.url;
+          displayUrl = result.displayUrl;
+          thumbnailUrl = result.thumbnailUrl;
         } catch (err) {
           console.error("[createCard] GCS upload failed for front photo, storing data URL:", err);
         }
@@ -174,16 +218,22 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
       await tx.insert(cardPhotos).values({
         cardId: newCard.id,
         originalUrl: photoUrl,
+        displayUrl,
+        thumbnailUrl,
         photoType: "front",
       });
     }
 
     if (input.backPhotoUrl) {
       let backUrl = input.backPhotoUrl;
+      let backDisplayUrl: string | null = null;
+      let backThumbnailUrl: string | null = null;
       if (input.backPhotoUrl.startsWith("data:")) {
         try {
-          const { url } = await uploadCardPhoto(input.backPhotoUrl, newCard.id, "back");
-          backUrl = url;
+          const result = await uploadCardPhoto(input.backPhotoUrl, newCard.id, "back");
+          backUrl = result.url;
+          backDisplayUrl = result.displayUrl;
+          backThumbnailUrl = result.thumbnailUrl;
         } catch (err) {
           console.error("[createCard] GCS upload failed for back photo, storing data URL:", err);
         }
@@ -191,6 +241,8 @@ export async function createCard(input: CreateCardInput): Promise<{ id: string }
       await tx.insert(cardPhotos).values({
         cardId: newCard.id,
         originalUrl: backUrl,
+        displayUrl: backDisplayUrl,
+        thumbnailUrl: backThumbnailUrl,
         photoType: "back",
       });
     }
@@ -347,6 +399,12 @@ export async function getCardPricingStatus(cardId: string) {
  * Bypasses the 24-hour freshness check and enqueues a new pricing job.
  */
 export async function rescoutCard(cardId: string) {
+  // Rate limit: 3 rescouts per minute
+  const rl = rateLimit("rescout", 3, 60_000);
+  if (!rl.success) {
+    return { success: false, error: "Too many requests. Please wait a moment." };
+  }
+
   // Delete any existing pending/running jobs for this card
   await db
     .delete(pricingJobs)
@@ -415,7 +473,7 @@ export async function getCards(filters?: {
   sortBy?: string;
   page?: number;
 }): Promise<{ cards: CardWithDetails[]; totalCount: number; page: number; pageSize: number }> {
-  const conditions = [];
+  const conditions = [isNull(cards.deletedAt)];
 
   if (filters?.status) {
     conditions.push(eq(cards.status, filters.status));
@@ -426,27 +484,42 @@ export async function getCards(filters?: {
       conditions.push(eq(cards.year, yearNum));
     }
   }
-  // Server-side search via SQL ilike
+  // Server-side fuzzy search via pg_trgm similarity + ilike fallback
   if (filters?.search) {
-    const term = `%${filters.search}%`;
-    conditions.push(
-      or(
-        ilike(players.name, term),
-        ilike(sets.name, term),
-        ilike(cards.cardNumber, term)
-      )
-    );
+    const term = filters.search.trim();
+    if (term.length > 0) {
+      const likeTerm = `%${term}%`;
+      conditions.push(
+        sql`(
+          similarity(${players.name}, ${term}) > 0.2
+          OR similarity(${sets.name}, ${term}) > 0.2
+          OR ${players.name} ILIKE ${likeTerm}
+          OR ${sets.name} ILIKE ${likeTerm}
+          OR ${cards.cardNumber} ILIKE ${likeTerm}
+        )`
+      );
+    }
   }
 
   const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
 
-  // Sort order
+  // Sort order — when searching without explicit sort, rank by relevance
+  const searchTerm = filters?.search?.trim();
   let orderClause;
   switch (filters?.sortBy) {
     case "name": orderClause = players.name; break;
     case "year": orderClause = desc(cards.year); break;
     case "value": orderClause = desc(priceEstimates.estimatedValueUsd); break;
-    default: orderClause = desc(cards.createdAt);
+    default:
+      if (searchTerm && searchTerm.length > 0) {
+        // Best fuzzy match first (highest similarity score)
+        orderClause = sql`GREATEST(
+          similarity(${players.name}, ${searchTerm}),
+          similarity(${sets.name}, ${searchTerm})
+        ) DESC`;
+      } else {
+        orderClause = desc(cards.createdAt);
+      }
   }
 
   const page = Math.max(1, filters?.page ?? 1);
@@ -492,6 +565,8 @@ export async function getCards(filters?: {
       estimatedValueUsd: priceEstimates.estimatedValueUsd,
       priceTrend: priceEstimates.priceTrend,
       trendPercentage: priceEstimates.trendPercentage,
+      referenceCardId: cards.referenceCardId,
+      aiCorrected: cards.aiCorrected,
     })
     .from(cards)
     .leftJoin(players, eq(cards.playerId, players.id))
@@ -551,6 +626,8 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
       subsetOrInsert: cards.subsetOrInsert,
       aiCorrected: cards.aiCorrected,
       referenceCardId: cards.referenceCardId,
+      referenceProductName: setProducts.name,
+      referenceProductYear: setProducts.year,
     })
     .from(cards)
     .leftJoin(players, eq(cards.playerId, players.id))
@@ -561,6 +638,8 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
       and(eq(cardPhotos.cardId, cards.id), eq(cardPhotos.photoType, "front"))
     )
     .leftJoin(priceEstimates, eq(priceEstimates.cardId, cards.id))
+    .leftJoin(referenceCards, eq(cards.referenceCardId, referenceCards.id))
+    .leftJoin(setProducts, eq(referenceCards.setProductId, setProducts.id))
     .where(eq(cards.id, id))
     .limit(1);
 
@@ -580,18 +659,50 @@ export async function getCardById(id: string): Promise<CardWithDetails | null> {
   return result;
 }
 
+// ── Collection Verification Stats ──
+
+export async function getCollectionVerificationStats(): Promise<{
+  total: number;
+  verified: number;
+  corrected: number;
+  aiOnly: number;
+}> {
+  const [result] = await db
+    .select({
+      total: sql<number>`count(*)::int`,
+      verified: sql<number>`count(case when ${cards.referenceCardId} is not null then 1 end)::int`,
+      corrected: sql<number>`count(case when ${cards.aiCorrected} = true and ${cards.referenceCardId} is null then 1 end)::int`,
+    })
+    .from(cards)
+    .where(isNull(cards.deletedAt));
+
+  const total = result?.total ?? 0;
+  const verified = result?.verified ?? 0;
+  const corrected = result?.corrected ?? 0;
+
+  return {
+    total,
+    verified,
+    corrected,
+    aiOnly: Math.max(0, total - verified - corrected),
+  };
+}
+
 // ── Dashboard Stats ──
 
 export async function getDashboardStats() {
   const [countResult] = await db
     .select({ count: sql<number>`count(*)::int` })
-    .from(cards);
+    .from(cards)
+    .where(isNull(cards.deletedAt));
 
   const [valueResult] = await db
     .select({
       total: sql<string>`coalesce(sum(${priceEstimates.estimatedValueCad}::numeric), 0)`,
     })
-    .from(priceEstimates);
+    .from(priceEstimates)
+    .innerJoin(cards, eq(priceEstimates.cardId, cards.id))
+    .where(isNull(cards.deletedAt));
 
   return {
     totalCards: countResult?.count ?? 0,
@@ -599,12 +710,76 @@ export async function getDashboardStats() {
   };
 }
 
-// ── Delete ──
+// ── Delete (soft) ──
 
 export async function deleteCard(id: string) {
-  await db.delete(cards).where(eq(cards.id, id));
+  await db.update(cards).set({ deletedAt: new Date(), updatedAt: new Date() }).where(eq(cards.id, id));
   revalidatePath("/cards");
+  revalidatePath("/cards/deleted");
   revalidatePath("/");
+}
+
+export async function restoreCard(id: string) {
+  await db.update(cards).set({ deletedAt: null, updatedAt: new Date() }).where(eq(cards.id, id));
+  revalidatePath("/cards");
+  revalidatePath("/cards/deleted");
+  revalidatePath("/");
+}
+
+export async function permanentlyDeleteCard(id: string) {
+  await db.delete(cards).where(eq(cards.id, id));
+  revalidatePath("/cards/deleted");
+  revalidatePath("/");
+}
+
+export async function emptyRecycleBin() {
+  await db.delete(cards).where(isNotNull(cards.deletedAt));
+  revalidatePath("/cards/deleted");
+  revalidatePath("/");
+}
+
+export async function getDeletedCards(): Promise<Array<{
+  id: string;
+  playerName: string | null;
+  setName: string | null;
+  year: number | null;
+  cardNumber: string | null;
+  parallelVariant: string | null;
+  deletedAt: Date;
+}>> {
+  const rows = await db
+    .select({
+      id: cards.id,
+      playerName: players.name,
+      setName: sets.name,
+      year: cards.year,
+      cardNumber: cards.cardNumber,
+      parallelVariant: cards.parallelVariant,
+      deletedAt: cards.deletedAt,
+    })
+    .from(cards)
+    .leftJoin(players, eq(cards.playerId, players.id))
+    .leftJoin(sets, eq(cards.setId, sets.id))
+    .where(isNotNull(cards.deletedAt))
+    .orderBy(desc(cards.deletedAt));
+
+  return rows as Array<{
+    id: string;
+    playerName: string | null;
+    setName: string | null;
+    year: number | null;
+    cardNumber: string | null;
+    parallelVariant: string | null;
+    deletedAt: Date;
+  }>;
+}
+
+export async function getDeletedCardCount(): Promise<number> {
+  const [result] = await db
+    .select({ count: sql<number>`count(*)::int` })
+    .from(cards)
+    .where(isNotNull(cards.deletedAt));
+  return result?.count ?? 0;
 }
 
 // ── Get cached comps from database ──
@@ -627,6 +802,280 @@ export interface CachedComps {
     matchScore: number | null;
     sourceName: string;
   }>;
+}
+
+// ── Update Card Identification (override AI) ──
+
+export async function updateCardIdentification(
+  cardId: string,
+  updates: {
+    playerName?: string;
+    setName?: string;
+    year?: number;
+    cardNumber?: string;
+    parallelVariant?: string;
+  }
+): Promise<{ success: boolean; error?: string }> {
+  try {
+    await db.transaction(async (tx) => {
+      // Fetch old card data + related names for correction logging
+      const [oldCard] = await tx
+        .select({
+          playerName: players.name,
+          setName: sets.name,
+          year: cards.year,
+          cardNumber: cards.cardNumber,
+          parallelVariant: cards.parallelVariant,
+          referenceCardId: cards.referenceCardId,
+        })
+        .from(cards)
+        .leftJoin(players, eq(cards.playerId, players.id))
+        .leftJoin(sets, eq(cards.setId, sets.id))
+        .where(eq(cards.id, cardId))
+        .limit(1);
+
+      // Log corrections for each changed field
+      const corrections: Array<{
+        correctionType: string;
+        fieldName: string;
+        aiOriginalValue: string | null;
+        userCorrectedValue: string | null;
+      }> = [];
+
+      if (updates.playerName && updates.playerName !== oldCard?.playerName) {
+        corrections.push({
+          correctionType: "player",
+          fieldName: "playerName",
+          aiOriginalValue: oldCard?.playerName ?? null,
+          userCorrectedValue: updates.playerName,
+        });
+      }
+      if (updates.setName && updates.setName !== oldCard?.setName) {
+        corrections.push({
+          correctionType: "set",
+          fieldName: "setName",
+          aiOriginalValue: oldCard?.setName ?? null,
+          userCorrectedValue: updates.setName,
+        });
+      }
+      if (updates.year !== undefined && updates.year !== oldCard?.year) {
+        corrections.push({
+          correctionType: "year",
+          fieldName: "year",
+          aiOriginalValue: oldCard?.year?.toString() ?? null,
+          userCorrectedValue: updates.year?.toString() ?? null,
+        });
+      }
+      if (updates.cardNumber !== undefined && updates.cardNumber !== oldCard?.cardNumber) {
+        corrections.push({
+          correctionType: "cardNumber",
+          fieldName: "cardNumber",
+          aiOriginalValue: oldCard?.cardNumber ?? null,
+          userCorrectedValue: updates.cardNumber ?? null,
+        });
+      }
+      if (updates.parallelVariant !== undefined && updates.parallelVariant !== oldCard?.parallelVariant) {
+        corrections.push({
+          correctionType: "parallel",
+          fieldName: "parallelVariant",
+          aiOriginalValue: oldCard?.parallelVariant ?? null,
+          userCorrectedValue: updates.parallelVariant ?? null,
+        });
+      }
+
+      // Insert correction log entries
+      if (corrections.length > 0) {
+        const correctionType = corrections.length > 1 ? "multiple" : corrections[0].correctionType;
+        for (const c of corrections) {
+          await tx.insert(correctionLog).values({
+            cardId,
+            correctionType: corrections.length > 1 ? "multiple" : c.correctionType,
+            fieldName: c.fieldName,
+            aiOriginalValue: c.aiOriginalValue,
+            userCorrectedValue: c.userCorrectedValue,
+          });
+        }
+      }
+
+      // Find or create player
+      if (updates.playerName) {
+        const existing = await tx
+          .select()
+          .from(players)
+          .where(ilike(players.name, updates.playerName))
+          .limit(1);
+
+        let playerId: string;
+        if (existing.length > 0) {
+          playerId = existing[0].id;
+        } else {
+          const [newPlayer] = await tx
+            .insert(players)
+            .values({ name: updates.playerName })
+            .returning();
+          playerId = newPlayer.id;
+        }
+        await tx.update(cards).set({ playerId }).where(eq(cards.id, cardId));
+      }
+
+      // Find or create set
+      if (updates.setName && updates.year) {
+        const existing = await tx
+          .select()
+          .from(sets)
+          .where(and(ilike(sets.name, updates.setName), eq(sets.year, updates.year)))
+          .limit(1);
+
+        let setId: string;
+        if (existing.length > 0) {
+          setId = existing[0].id;
+        } else {
+          const [newSet] = await tx
+            .insert(sets)
+            .values({ name: updates.setName, year: updates.year })
+            .returning();
+          setId = newSet.id;
+        }
+        await tx.update(cards).set({ setId }).where(eq(cards.id, cardId));
+      }
+
+      // Update card fields + mark as corrected
+      await tx
+        .update(cards)
+        .set({
+          ...(updates.year !== undefined ? { year: updates.year } : {}),
+          ...(updates.cardNumber !== undefined ? { cardNumber: updates.cardNumber || null } : {}),
+          ...(updates.parallelVariant !== undefined ? { parallelVariant: updates.parallelVariant || null } : {}),
+          aiCorrected: true,
+          updatedAt: new Date(),
+        })
+        .where(eq(cards.id, cardId));
+    });
+
+    // Re-trigger pricing with corrected identity
+    await rescoutCard(cardId);
+
+    revalidatePath(`/cards/${cardId}`);
+    revalidatePath("/cards");
+    revalidatePath("/dashboard");
+    return { success: true };
+  } catch (err) {
+    console.error("[updateCardIdentification] Error:", err);
+    return { success: false, error: String(err) };
+  }
+}
+
+// ── Bulk Operations ──
+
+export async function bulkUpdateStatus(cardIds: string[], status: string): Promise<{ success: boolean; count: number }> {
+  if (cardIds.length === 0) return { success: true, count: 0 };
+
+  const validStatuses = ["in_collection", "for_sale", "sold", "traded"];
+  if (!validStatuses.includes(status)) {
+    throw new Error(`Invalid status: ${status}`);
+  }
+
+  await db
+    .update(cards)
+    .set({ status, updatedAt: new Date() })
+    .where(inArray(cards.id, cardIds));
+
+  revalidatePath("/cards");
+  revalidatePath("/");
+  return { success: true, count: cardIds.length };
+}
+
+export async function bulkDelete(cardIds: string[]): Promise<{ success: boolean; count: number }> {
+  if (cardIds.length === 0) return { success: true, count: 0 };
+
+  await db
+    .update(cards)
+    .set({ deletedAt: new Date(), updatedAt: new Date() })
+    .where(inArray(cards.id, cardIds));
+
+  revalidatePath("/cards");
+  revalidatePath("/cards/deleted");
+  revalidatePath("/");
+  return { success: true, count: cardIds.length };
+}
+
+export async function bulkExport(cardIds: string[]): Promise<string> {
+  if (cardIds.length === 0) return "";
+
+  const rows = await db
+    .select({
+      playerName: players.name,
+      playerTeam: players.team,
+      year: cards.year,
+      setName: sets.name,
+      manufacturer: manufacturers.name,
+      cardNumber: cards.cardNumber,
+      parallelVariant: cards.parallelVariant,
+      isRookieCard: cards.isRookieCard,
+      isAutograph: cards.isAutograph,
+      condition: cards.condition,
+      graded: cards.graded,
+      gradingCompany: cards.gradingCompany,
+      grade: cards.grade,
+      status: cards.status,
+      purchasePrice: cards.purchasePrice,
+      purchaseCurrency: cards.purchaseCurrency,
+      purchaseDate: cards.purchaseDate,
+      purchaseSource: cards.purchaseSource,
+      estimatedValueUsd: priceEstimates.estimatedValueUsd,
+      estimatedValueCad: priceEstimates.estimatedValueCad,
+      notes: cards.notes,
+      createdAt: cards.createdAt,
+    })
+    .from(cards)
+    .leftJoin(players, eq(cards.playerId, players.id))
+    .leftJoin(sets, eq(cards.setId, sets.id))
+    .leftJoin(manufacturers, eq(sets.manufacturerId, manufacturers.id))
+    .leftJoin(priceEstimates, eq(priceEstimates.cardId, cards.id))
+    .where(inArray(cards.id, cardIds))
+    .orderBy(desc(cards.createdAt));
+
+  function esc(val: string | null | undefined): string {
+    if (!val) return "";
+    if (val.includes(",") || val.includes('"') || val.includes("\n")) {
+      return `"${val.replace(/"/g, '""')}"`;
+    }
+    return val;
+  }
+
+  const headers = [
+    "Player", "Team", "Year", "Set", "Manufacturer", "Card #", "Parallel",
+    "Rookie", "Auto", "Condition", "Graded", "Grading Co", "Grade",
+    "Status", "Purchase Price", "Currency", "Purchase Date", "Source",
+    "Est Value USD", "Est Value CAD", "Notes", "Date Added",
+  ];
+
+  const csvRows = rows.map(r => [
+    esc(r.playerName),
+    esc(r.playerTeam),
+    r.year ?? "",
+    esc(r.setName),
+    esc(r.manufacturer),
+    esc(r.cardNumber),
+    esc(r.parallelVariant),
+    r.isRookieCard ? "Yes" : "No",
+    r.isAutograph ? "Yes" : "No",
+    esc(r.condition),
+    r.graded ? "Yes" : "No",
+    esc(r.gradingCompany),
+    esc(r.grade),
+    r.status ?? "in_collection",
+    r.purchasePrice ?? "",
+    r.purchaseCurrency ?? "CAD",
+    r.purchaseDate ? new Date(r.purchaseDate).toISOString().slice(0, 10) : "",
+    esc(r.purchaseSource),
+    r.estimatedValueUsd ?? "",
+    r.estimatedValueCad ?? "",
+    esc(r.notes),
+    r.createdAt ? new Date(r.createdAt).toISOString().slice(0, 10) : "",
+  ]);
+
+  return [headers.join(","), ...csvRows.map(r => r.join(","))].join("\n");
 }
 
 export async function getCardComps(cardId: string): Promise<CachedComps> {

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, TrendingUp, TrendingDown, Minus, BarChart3, Package, ArrowUpRight } from "lucide-react";
 import { getPortfolioStats } from "@/actions/portfolio";
+import { PortfolioValueChart } from "@/components/portfolio/value-chart";
+import { SetCompletionTracker } from "@/components/portfolio/set-tracker";
 
 export default async function PortfolioPage() {
   const stats = await getPortfolioStats();
@@ -91,6 +93,12 @@ export default async function PortfolioPage() {
           </CardContent>
         </Card>
       </div>
+
+      {/* B-007: Portfolio Value Chart */}
+      <PortfolioValueChart />
+
+      {/* B-009: Set Completion Tracker */}
+      <SetCompletionTracker />
 
       <div className="grid gap-4 md:grid-cols-2">
         {/* Top 5 Most Valuable */}
