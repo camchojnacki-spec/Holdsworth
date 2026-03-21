@@ -127,6 +127,20 @@ export default function ReferenceDbPage() {
             Master card checklist &amp; parallel data
           </p>
         </div>
+        <div className="ml-auto flex gap-2">
+          <Link href="/settings/reference-db/import">
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <Database className="h-3 w-3" />
+              Import
+            </Button>
+          </Link>
+          <Link href="/settings/reference-db/feedback">
+            <Button variant="outline" size="sm" className="gap-1.5 text-xs">
+              <Sparkles className="h-3 w-3" />
+              Feedback
+            </Button>
+          </Link>
+        </div>
       </div>
 
       {/* Stats Summary */}

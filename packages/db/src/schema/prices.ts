@@ -10,6 +10,7 @@ import {
   index,
 } from "drizzle-orm/pg-core";
 import { cards } from "./cards";
+import { referenceCards, parallelTypes, setProducts } from "./reference";
 
 export const priceSources = pgTable("price_sources", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -40,11 +41,18 @@ export const priceHistory = pgTable(
     condition: varchar("condition", { length: 50 }),
     graded: boolean("graded").default(false),
     grade: varchar("grade", { length: 20 }),
+    // Reference DB FKs for direct aggregation (no string matching)
+    referenceCardId: uuid("reference_card_id").references(() => referenceCards.id),
+    parallelTypeId: uuid("parallel_type_id").references(() => parallelTypes.id),
+    setProductId: uuid("set_product_id").references(() => setProducts.id),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => [
     index("price_history_card_source_idx").on(table.cardId, table.sourceId, table.saleDate),
     index("price_history_sale_date_idx").on(table.saleDate),
+    index("idx_ph_ref_card").on(table.referenceCardId),
+    index("idx_ph_parallel").on(table.parallelTypeId),
+    index("idx_ph_set_product").on(table.setProductId),
   ]
 );
 

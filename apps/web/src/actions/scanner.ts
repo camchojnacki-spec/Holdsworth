@@ -15,7 +15,8 @@ import {
   multiPassReferenceLookup,
   type ReferenceLookupResult,
 } from "@/lib/ai/reference-matcher";
-import { db, scanSessions } from "@holdsworth/db";
+import { db, scanSessions, setImportAttempts } from "@holdsworth/db";
+import { eq, and, ilike } from "drizzle-orm";
 import { rateLimit } from "@/lib/rate-limit";
 
 export interface ScanActionResult {
@@ -245,6 +246,14 @@ async function scanCardInternal(formData: FormData, skipRateLimit: boolean): Pro
       // Non-critical — don't fail the scan if session recording fails
     }
 
+    // ── Scan-triggered import (Sprint 2): queue TCDB import when reference DB misses ──
+    // After the scan is complete, if no reference match was found but AI identified
+    // a set name + year, queue a background import to grow the reference DB.
+    if (pipelinePath === "full-identification" && finalResult.set_name && finalResult.year) {
+      queueReferenceImportIfNeeded(finalResult.set_name, finalResult.year, finalResult.manufacturer ?? null)
+        .catch(() => {}); // Fire-and-forget, don't block scan response
+    }
+
     return {
       success: true,
       data: finalResult,
@@ -276,5 +285,78 @@ async function scanCardInternal(formData: FormData, skipRateLimit: boolean): Pro
       error: message,
       processingTimeMs,
     };
+  }
+}
+
+/**
+ * Queue a background reference DB import when a scan finds no reference match.
+ * Checks set_import_attempts to avoid redundant TCDB searches for known failures.
+ */
+async function queueReferenceImportIfNeeded(
+  setName: string,
+  year: number,
+  manufacturer: string | null
+): Promise<void> {
+  try {
+    // Check if we've already tried and failed
+    const [existing] = await db
+      .select()
+      .from(setImportAttempts)
+      .where(
+        and(
+          ilike(setImportAttempts.setName, `%${setName}%`),
+          eq(setImportAttempts.year, year)
+        )
+      )
+      .limit(1);
+
+    if (existing && existing.status === "not_found") {
+      console.log(`[scanner] Skipping TCDB import for "${setName}" ${year} — previously not found`);
+      return;
+    }
+
+    if (existing && existing.status === "imported") {
+      console.log(`[scanner] "${setName}" ${year} already imported`);
+      return;
+    }
+
+    // Record the attempt
+    await db.insert(setImportAttempts).values({
+      setName,
+      year,
+      manufacturer,
+      status: "pending",
+    });
+
+    console.log(`[scanner] Queued reference import for "${setName}" ${year}`);
+
+    // Try the import in-process (non-blocking to the scan response)
+    try {
+      const { importFromTcdb } = await import("@/actions/reference-import");
+      // Search TCDB for this set (best effort)
+      const result = await importFromTcdb({ productName: setName, year });
+
+      await db
+        .update(setImportAttempts)
+        .set({
+          status: result.success ? "imported" : "not_found",
+          lastAttempted: new Date(),
+          errorMessage: result.success ? null : result.error,
+        })
+        .where(
+          and(
+            ilike(setImportAttempts.setName, `%${setName}%`),
+            eq(setImportAttempts.year, year)
+          )
+        );
+
+      if (result.success) {
+        console.log(`[scanner] Auto-imported "${setName}" ${year}: ${result.cardsUpserted} cards`);
+      }
+    } catch (importErr) {
+      console.warn(`[scanner] Background import failed for "${setName}" ${year}:`, importErr);
+    }
+  } catch (err) {
+    console.warn("[scanner] queueReferenceImportIfNeeded failed:", err);
   }
 }

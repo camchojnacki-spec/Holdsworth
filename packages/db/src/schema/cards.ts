@@ -12,7 +12,7 @@ import {
 } from "drizzle-orm/pg-core";
 import { players } from "./players";
 import { sets } from "./sets";
-import { referenceCards } from "./reference";
+import { referenceCards, subsets } from "./reference";
 
 export const cards = pgTable(
   "cards",
@@ -20,6 +20,7 @@ export const cards = pgTable(
     id: uuid("id").defaultRandom().primaryKey(),
     playerId: uuid("player_id").references(() => players.id),
     setId: uuid("set_id").references(() => sets.id),
+    subsetId: uuid("subset_id").references(() => subsets.id),
     cardNumber: varchar("card_number", { length: 50 }),
     year: integer("year"),
     parallelVariant: varchar("parallel_variant", { length: 255 }),

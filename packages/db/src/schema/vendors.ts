@@ -3,11 +3,13 @@ import {
   uuid,
   varchar,
   numeric,
+  integer,
   boolean,
   text,
   timestamp,
   index,
 } from "drizzle-orm/pg-core";
+import { setProducts } from "./reference";
 
 export const vendors = pgTable("vendors", {
   id: uuid("id").defaultRandom().primaryKey(),
@@ -26,11 +28,13 @@ export const vendorProducts = pgTable(
     vendorId: uuid("vendor_id")
       .references(() => vendors.id, { onDelete: "cascade" })
       .notNull(),
+    setProductId: uuid("set_product_id")
+      .references(() => setProducts.id),
     productName: varchar("product_name", { length: 500 }).notNull(),
     productUrl: varchar("product_url", { length: 1000 }),
     productType: varchar("product_type", { length: 50 }),
     sport: varchar("sport", { length: 100 }).default("baseball"),
-    year: varchar("year", { length: 10 }),
+    year: integer("year"),
     setName: varchar("set_name", { length: 255 }),
     priceUsd: numeric("price_usd", { precision: 10, scale: 2 }),
     priceCad: numeric("price_cad", { precision: 10, scale: 2 }),
